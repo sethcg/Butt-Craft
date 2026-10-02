@@ -1,6 +1,11 @@
 package com.github.sethcg.buttcraft;
 
+import com.github.sethcg.buttcraft.networking.FartPayload;
+import com.github.sethcg.buttcraft.networking.FartRequestPayload;
+
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 
 import net.minecraft.resources.Identifier;
 
@@ -8,23 +13,57 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class ButtCraft implements ModInitializer {
-	public static final String MOD_ID = "buttcraft";
 
-	// This logger is used to write text to the console and the log file.
-	// It is considered best practice to use your mod id as the logger's name.
-	// That way, it's clear which mod wrote info, warnings, and errors.
-	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+    public static final String MOD_ID = "buttcraft";
+    public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-	@Override
-	public void onInitialize() {
-		// This code runs as soon as Minecraft is in a mod-load-ready state.
-		// However, some things (like resources) may still be uninitialized.
-		// Proceed with mild caution.
+    // SET THE MAXIMUM DISTANCE THAT A FART CAN BE HEARD (16x16 BLOCK RADIUS)
+    private static final double FART_RADIUS = 16.0;
+    private static final double FART_RADIUS_SQUARED = FART_RADIUS * FART_RADIUS;
 
-		LOGGER.info("Hello Fabric world!");
-	}
+    @Override
+    public void onInitialize() {
 
-	public static Identifier id(String path) {
-		return Identifier.fromNamespaceAndPath(MOD_ID, path);
-	}
+		// REGISTER CUSTOM SOUNDS
+        ModSounds.initialize();
+
+        // REGISTER THE CLIENT -> SERVER FART REQUEST.
+        PayloadTypeRegistry.serverboundPlay().register(
+			FartRequestPayload.TYPE,
+			FartRequestPayload.CODEC
+        );
+
+        // REGISTER THE SERVER -> CLIENT FART PAYLOAD.
+        PayloadTypeRegistry.clientboundPlay().register(
+			FartPayload.TYPE,
+			FartPayload.CODEC
+        );
+
+        // RECEIVE FART REQUESTS FROM CLIENTS.
+        ServerPlayNetworking.registerGlobalReceiver(
+			FartRequestPayload.TYPE,
+			(payload, context) -> {
+				var player = context.player();
+
+				// GET THE PLAYER'S REAL SERVER-SIDE POSITION.
+				double x = player.getX();
+				double y = player.getY();
+				double z = player.getZ();
+
+				// CREATE THE PAYLOAD THAT WILL BE SENT TO NEARBY CLIENTS.
+				FartPayload fart = new FartPayload(x, y, z);
+
+				// SEND THE FART TO EVERY PLAYER WITHIN 16 BLOCKS.
+				player.level().players().stream()
+					.filter(other -> other.distanceToSqr(player) <= FART_RADIUS_SQUARED)
+					.forEach(other -> ServerPlayNetworking.send(other, fart));
+			}
+        );
+
+        LOGGER.info("BUTTCRAFT INITIALIZED.");
+    }
+
+    public static Identifier id(String path) {
+        return Identifier.fromNamespaceAndPath(MOD_ID, path);
+    }
 }

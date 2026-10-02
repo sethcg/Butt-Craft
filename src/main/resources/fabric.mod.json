@@ -18,13 +18,6 @@
 			"com.github.sethcg.buttcraft.client.ButtCraftClient"
 		]
 	},
-	"mixins": [
-		"buttcraft.mixins.json",
-		{
-			"config": "buttcraft.client.mixins.json",
-			"environment": "client"
-		}
-	],
 	"depends": {
 		"fabricloader": ">=0.19.5",
 		"minecraft": "~26.3",
