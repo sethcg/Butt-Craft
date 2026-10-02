@@ -1,0 +1,33 @@
+# GRADLE
+.gradle/
+build/
+out/
+classes/
+
+# ECLIPSE
+*.launch
+
+# IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# VSCODE
+.settings/
+bin/
+.classpath
+.project
+
+# MacOS
+
+*.DS_Store
+
+# FABRIC
+run/
+
+# JAVA
+hs_err_*.log
+replay_*.log
+*.hprof
+*.jfr
