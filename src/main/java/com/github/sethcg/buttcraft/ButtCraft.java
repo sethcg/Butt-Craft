@@ -49,9 +49,10 @@ public class ButtCraft implements ModInitializer {
 				double x = player.getX();
 				double y = player.getY();
 				double z = player.getZ();
+                float yaw = player.getYRot();
 
 				// CREATE THE PAYLOAD THAT WILL BE SENT TO NEARBY CLIENTS.
-				FartPayload fart = new FartPayload(x, y, z);
+				FartPayload fart = new FartPayload(x, y, z, yaw);
 
 				// SEND THE FART TO EVERY PLAYER WITHIN 16 BLOCKS.
 				player.level().players().stream()

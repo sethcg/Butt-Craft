@@ -7,7 +7,7 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
-public record FartPayload(double x, double y, double z) implements CustomPacketPayload {
+public record FartPayload(double x, double y, double z, float yaw) implements CustomPacketPayload {
 
     public static final Identifier ID = ButtCraft.id("fart");
     public static final Type<FartPayload> TYPE = new Type<>(ID);
@@ -18,11 +18,13 @@ public record FartPayload(double x, double y, double z) implements CustomPacketP
                 buf.writeDouble(payload.x());
                 buf.writeDouble(payload.y());
                 buf.writeDouble(payload.z());
+                buf.writeFloat(payload.yaw());
             },
             buf -> new FartPayload(
                 buf.readDouble(),
                 buf.readDouble(),
-                buf.readDouble()
+                buf.readDouble(),
+                buf.readFloat()
             )
         );
 
