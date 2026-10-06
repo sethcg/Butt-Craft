@@ -18,3 +18,19 @@ Whether you're defending your base, clearing a cave, or just asserting dominance
 - 💥 **Damage enemies** — Your farts actually hurt.
 - 🪽 **Knockback** — Send mobs flying.
 - 😭 **Bring a tear to their eyes** — For obvious reasons.
+
+## Developer Notes:
+
+```bash
+
+# BUILD
+./gradlew build
+
+# CLEAN AND REBUILD
+./gradlew clean build
+
+# RUN
+./gradlew :1.21.11:runClient
+./gradlew :26.3:runClient
+
+```

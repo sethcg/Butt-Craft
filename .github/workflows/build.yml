@@ -3,7 +3,9 @@
 # certain platforms or Java versions, and provides a first line of defence
 # against bad commits.
 name: build
-on: [pull_request, push]
+
+# on: [pull_request, push]
+on: [workflow_dispatch]
 
 jobs:
   build:
@@ -32,4 +34,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: buttcraft-${{ github.sha }}
-          path: build/libs/*.jar
+          path: |
+            1.21.11/build/libs/*.jar
+            26.3/build/libs/*.jar
