@@ -1,0 +1,14 @@
+{
+  "fart": {
+    "sounds": [
+      {
+        "name": "buttcraft:dry_fart",
+        "stream": false
+      },
+      {
+        "name": "buttcraft:wet_fart",
+        "stream": false
+      }
+    ]
+  }
+}

@@ -1,11 +1,17 @@
 pluginManagement {
-	repositories {
-		maven {
-			name = 'Fabric'
-			url = 'https://maven.fabricmc.net/'
-		}
-		mavenCentral()
-		gradlePluginPortal()
-	}
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        mavenCentral()
+        gradlePluginPortal()
+    }
 }
+
 rootProject.name = 'buttcraft'
+
+include(
+    ':1.21.11',
+    ':26.3'
+)
