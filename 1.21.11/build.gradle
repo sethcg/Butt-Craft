@@ -24,8 +24,18 @@ loom {
 
 sourceSets {
     main {
+        java {
+            srcDir "../common/main/java"
+        }
+
         resources {
-            srcDir "../common/resources"
+            srcDir "../common/main/resources"
+        }
+    }
+
+    client {
+        java {
+            srcDir "../common/client/java"
         }
     }
 }

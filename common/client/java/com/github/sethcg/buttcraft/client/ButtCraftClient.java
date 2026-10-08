@@ -4,14 +4,11 @@ import com.github.sethcg.buttcraft.ButtCraft;
 import com.github.sethcg.buttcraft.ModSounds;
 import com.github.sethcg.buttcraft.networking.FartPayload;
 import com.github.sethcg.buttcraft.networking.FartRequestPayload;
-import com.mojang.blaze3d.platform.InputConstants;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 
-import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.particles.ColorParticleOption;
@@ -22,41 +19,41 @@ import net.minecraft.world.effect.MobEffects;
 
 public class ButtCraftClient implements ClientModInitializer {
 
-    private final KeyMapping.Category CATEGORY = KeyMapping.Category.register(
-            ButtCraft.id("buttcraft"));
-
-    private final KeyMapping FART_KEY = KeyMappingHelper.registerKeyMapping(
-            new KeyMapping(
-                "key.buttcraft.fart",
-                InputConstants.Type.KEYBOARD,
-                InputConstants.KEY_R,
-                this.CATEGORY));
+    // CLIENT-SIDE COOLDOWN (NOT NECESSARY AS SERVER ENFORCES THIS)
+    private static final int FART_COOLDOWN_TICKS = 20;
+    private long fartCooldown = 0;
 
     private static final int POISON_COLOR = 0xFF000000 | MobEffects.POISON.value().getColor();
-    private static final ColorParticleOption POISON_PARTICLE = ColorParticleOption.create(ParticleTypes.ENTITY_EFFECT,
-            POISON_COLOR);
+    private static final ColorParticleOption POISON_PARTICLE = 
+        ColorParticleOption.create(ParticleTypes.ENTITY_EFFECT, POISON_COLOR);
 
     @Override
     public void onInitializeClient() {
+        ButtCraft.LOGGER.info("BUTTCRAFT CLIENT INITIALIZED.");
 
-        // CHECK FOR THE FART KEY EVERY CLIENT TICK.
+        KeyBindings.initialize();
+
+        // CHECK FOR THE FART KEY EVERY CLIENT TICK
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
 
-            // HANDLE EVERY FART KEY PRESS THAT HAS BEEN REGISTERED.
-            while (this.FART_KEY.consumeClick()) {
+            // HANDLE EVERY FART KEY PRESS THAT HAS BEEN REGISTERED
+            while (KeyBindings.FART_KEY.consumeClick()) {
                 if (client.player == null)
                     continue;
 
-                // TELL THE SERVER THAT THE PLAYER PRESSED THE FART KEY.
+                if (!canFart(client))
+                    continue;
+
+                // TELL THE SERVER THAT THE PLAYER PRESSED THE FART KEY
                 ClientPlayNetworking.send(new FartRequestPayload());
             }
         });
 
-        // RECEIVE FARTS FROM THE SERVER.
+        // RECEIVE FARTS FROM THE SERVER
         ClientPlayNetworking.registerGlobalReceiver(
                 FartPayload.TYPE,
                 (payload, context) -> {
-                    // RUN THE SOUND AND PARTICLE CODE ON THE CLIENT THREAD.
+                    // RUN THE SOUND AND PARTICLE CODE ON THE CLIENT THREAD
                     Minecraft client = context.client();
 
                     if (client.player == null)
@@ -72,6 +69,18 @@ public class ButtCraftClient implements ClientModInitializer {
                         spawnPoisonParticles(client, x, y, z, yaw);
                     });
                 });
+    }
+
+    private boolean canFart(Minecraft client) {
+        long currentTick = client.player.level().getGameTime();
+
+        if (currentTick < this.fartCooldown) {
+            return false;
+        }
+
+        this.fartCooldown = currentTick + FART_COOLDOWN_TICKS;
+
+        return true;
     }
 
     private void playFart(Minecraft client, double x, double y, double z) {
@@ -104,7 +113,7 @@ public class ButtCraftClient implements ClientModInitializer {
         double sideX = -backwardZ;
         double sideZ = backwardX;
 
-        // SPAWN A CLOUD OF POISON PARTICLES AT WAIST LEVEL.
+        // SPAWN A CLOUD OF POISON PARTICLES AT WAIST LEVEL
         for (int i = 0; i < 28; i++) {
             double offsetX = (random.nextDouble() - 0.5) * 0.15;
             double offsetY = 0.45 + random.nextDouble() * 0.2;
@@ -138,4 +147,5 @@ public class ButtCraftClient implements ClientModInitializer {
                 speedZ);
         }
     }
+
 }
