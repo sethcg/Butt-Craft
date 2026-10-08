@@ -1,5 +1,19 @@
 {
     "java.configuration.updateBuildConfiguration": "automatic",
     "java.dependency.packagePresentation": "hierarchical",
-    "java.compile.nullAnalysis.mode": "disabled"
+    "java.compile.nullAnalysis.mode": "disabled",
+
+    // EXCLUDE FROM EXPLORER/SEARCH "BUILD" FOLDERS
+    "files.exclude": {
+        "**/.gradle": true,
+        "**/build": true,
+        "**/run": true,
+        "**/bin": true
+    },
+    "search.exclude": {
+        "**/.gradle": true,
+        "**/build": true,
+        "**/run": true,
+        "**/bin": true
+    }
 }

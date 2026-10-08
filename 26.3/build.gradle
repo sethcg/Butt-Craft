@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.bundling.AbstractArchiveTask
+
 plugins {
 	id 'net.fabricmc.fabric-loom' version "${loom_version}"
 	id 'maven-publish'
@@ -24,6 +26,14 @@ loom {
 	}
 }
 
+sourceSets {
+    main {
+        resources {
+            srcDir "../common/resources"
+        }
+    }
+}
+
 dependencies {
 	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
@@ -34,12 +44,24 @@ dependencies {
 }
 
 processResources {
-	def version = project.version
-	inputs.property "version", version
+    def version = project.version
+    def minecraftVersion = project.minecraft_version
+    def loaderVersion = project.loader_version
+    def javaVersion = project.java_version
 
-	filesMatching("fabric.mod.json") {
-		expand "version": version
-	}
+    inputs.property "version", version
+    inputs.property "minecraft_version", minecraftVersion
+    inputs.property "loader_version", loaderVersion
+    inputs.property "java_version", javaVersion
+
+    filesMatching("fabric.mod.json") {
+        expand(
+            "version": version,
+            "minecraft_version": minecraftVersion,
+            "loader_version": loaderVersion,
+            "java_version": javaVersion
+        )
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {
