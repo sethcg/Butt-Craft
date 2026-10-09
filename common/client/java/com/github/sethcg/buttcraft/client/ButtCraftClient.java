@@ -12,6 +12,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
+import net.minecraft.client.resources.sounds.SoundInstance;
 import net.minecraft.sounds.SoundSource;
 
 public class ButtCraftClient implements ClientModInitializer {
@@ -59,7 +60,7 @@ public class ButtCraftClient implements ClientModInitializer {
                     float yaw = payload.yaw();
 
                     client.execute(() -> {
-                        playFart(client, x, y, z);
+                        playFart(client);
                         FartGas.emit(client, x, y, z, yaw);
                     });
                 });
@@ -77,18 +78,24 @@ public class ButtCraftClient implements ClientModInitializer {
         return true;
     }
 
-    private void playFart(Minecraft client, double x, double y, double z) {
+    private void playFart(Minecraft client) {
         if (client.player == null) return;
 
+        // NON-POSITIONAL: THE SERVER ONLY SENDS FARTS TO PLAYERS WITHIN RANGE,
+        // SO EVERYONE WHO RECEIVES ONE HEARS IT AT FULL VOLUME.
         SimpleSoundInstance sound = new SimpleSoundInstance(
-                ModSounds.FART,
+                ModSounds.FART.location(),
                 SoundSource.PLAYERS,
                 1.0F,
                 1.0F,
                 client.player.level().getRandom(),
-                x,
-                y,
-                z);
+                false,
+                0,
+                SoundInstance.Attenuation.NONE,
+                0.0,
+                0.0,
+                0.0,
+                true);
 
         client.getSoundManager().play(sound);
     }

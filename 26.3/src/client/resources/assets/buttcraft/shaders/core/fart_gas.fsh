@@ -42,7 +42,8 @@ uniform sampler2D NoiseSampler;
 uniform sampler2D DepthSampler;
 
 layout(location = 0) in vec2 texCoord;
-layout(location = 1) in vec4 viewRayH;
+layout(location = 1) in vec4 unprojectBase;
+layout(location = 2) in vec4 unprojectDepth;
 
 layout(location = 0) out vec4 fragColor;
 
@@ -199,20 +200,18 @@ float gasDensityLow(vec3 p) {
 
 // -----------------------------------------------------------------------------
 
-float sceneDistance(vec3 rayView) {
-    float deviceDepth = texture(DepthSampler, texCoord).r;
-
-    // REVERSED-Z: 0 IS THE FAR PLANE / SKY.
-    if (deviceDepth <= 0.0) {
-        return 1e9;
-    }
-
-    #ifndef RENDERPEARL_DEPTH_IS_ZERO_TO_ONE
-    deviceDepth = deviceDepth * 2.0 - 1.0;
+float deviceToNdcDepth(float deviceDepth) {
+    #ifdef RENDERPEARL_DEPTH_IS_ZERO_TO_ONE
+    return deviceDepth;
+    #else
+    return deviceDepth * 2.0 - 1.0;
     #endif
+}
 
-    float linearDepth = ProjMat[3][2] / (deviceDepth + ProjMat[2][2]);
-    return linearDepth / max(-rayView.z, 1e-4);
+// VIEW-SPACE POSITION AT THIS PIXEL FOR A DEVICE DEPTH (REVERSED-Z: 1 = NEAR, 0 = FAR).
+vec3 unprojectView(float deviceDepth) {
+    vec4 h = unprojectBase + deviceToNdcDepth(deviceDepth) * unprojectDepth;
+    return h.xyz / h.w;
 }
 
 void main() {
@@ -221,11 +220,22 @@ void main() {
         discard;
     }
 
-    vec3 rayView = normalize(viewRayH.xyz / viewRayH.w);
-    vec3 rd = normalize(mat3(ViewToWorld) * rayView);
-    float sceneT = sceneDistance(rayView);
+    // RAY FROM THE NEAR PLANE THROUGH A FAR POINT. BOTH ARE REAL UNPROJECTED POINTS,
+    // SO THE RAY STAYS CORRECT WHILE VIEW BOBBING OFFSETS THE EYE.
+    vec3 nearView = unprojectView(1.0);
+    vec3 farView = unprojectView(0.001);
+    mat3 viewToWorld = mat3(ViewToWorld);
+    vec3 ro = viewToWorld * nearView;
+    vec3 rd = normalize(viewToWorld * (farView - nearView));
 
-    // 1. BROAD PHASE: RAY / SPHERE AGAINST EVERY PUFF (CAMERA AT ORIGIN).
+    // DISTANCE ALONG THE RAY TO THE OPAQUE SCENE (SKY = 0 = INFINITELY FAR).
+    float deviceDepth = texture(DepthSampler, texCoord).r;
+    float sceneT = 1e9;
+    if (deviceDepth > 0.0) {
+        sceneT = max(dot(viewToWorld * unprojectView(deviceDepth) - ro, rd), 0.0);
+    }
+
+    // 1. BROAD PHASE: RAY / SPHERE AGAINST EVERY PUFF.
     float tStart = 1e9;
     float tEnd = 0.0;
     for (int i = 0; i < MAX_PUFFS; i++) {
@@ -234,8 +244,9 @@ void main() {
         }
 
         vec4 shape = Puffs[i * 2];
-        float b = dot(shape.xyz, rd);
-        float c = dot(shape.xyz, shape.xyz) - shape.w * shape.w;
+        vec3 toCenter = shape.xyz - ro;
+        float b = dot(toCenter, rd);
+        float c = dot(toCenter, toCenter) - shape.w * shape.w;
         float h = b * b - c;
         if (h <= 0.0) {
             continue;
@@ -280,7 +291,7 @@ void main() {
             break;
         }
 
-        vec3 p = rd * t;
+        vec3 p = ro + rd * t;
         vec3 info;
         vec2 field = puffField(p, info);
 
@@ -364,7 +375,7 @@ void main() {
 
     // 5. VANILLA FOG AT THE OPACITY-WEIGHTED DEPTH OF THE GAS.
     float fogDistance = weightedDistance / max(weightTotal, 1e-4);
-    vec3 fogPosition = rd * fogDistance;
+    vec3 fogPosition = ro + rd * fogDistance;
     float fogValue = total_fog_value(
         fog_spherical_distance(fogPosition),
         fog_cylindrical_distance(fogPosition),
