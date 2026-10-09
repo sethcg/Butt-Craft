@@ -17,8 +17,13 @@ Whether you're defending your base, clearing a cave, or just asserting dominance
 - 💨 **Fart-based combat** — A revolutionary new weapon.
 - 💥 **Damage enemies** — Your farts actually hurt.
 - 🪽 **Knockback** — Send mobs flying.
-- ☁️ **Volumetric gas** — Every fart releases a GPU ray-marched, physically simulated gas cloud (26.3).
+- ☁️ **Volumetric gas** — Every fart releases a GPU ray-marched, physically simulated gas cloud.
 - 😭 **Bring a tear to their eyes** — For obvious reasons.
+
+## Requirements
+
+- Minecraft 26.3 or newer
+- Fabric Loader and Fabric API
 
 ## Developer Notes:
 
@@ -31,7 +36,6 @@ Whether you're defending your base, clearing a cave, or just asserting dominance
 ./gradlew clean build
 
 # RUN
-./gradlew :1.21.11:runClient
 ./gradlew :26.3:runClient
 
 ```

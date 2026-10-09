@@ -2,6 +2,8 @@ package com.github.sethcg.buttcraft.client.gas;
 
 import org.jspecify.annotations.Nullable;
 
+import com.github.sethcg.buttcraft.ButtCraft;
+
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
@@ -24,6 +26,9 @@ public final class FartGas {
     }
 
     public static void initialize() {
+        FartGasSettings.load();
+        ButtCraft.LOGGER.info("FART GAS SETTINGS: {} ({}).", FartGasSettings.current(), FartGasSettings.preset());
+
         // TOUCH THE PIPELINE SO IT IS REGISTERED BEFORE THE FIRST RESOURCE RELOAD COMPILES SHADERS.
         FartGasRenderer.PIPELINE.getLocation();
 

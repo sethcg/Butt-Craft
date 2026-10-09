@@ -12,6 +12,5 @@ pluginManagement {
 rootProject.name = 'buttcraft'
 
 include(
-    ':1.21.11',
     ':26.3'
 )
