@@ -33,7 +33,7 @@ public class ButtCraft implements ModInitializer {
     private static final Map<UUID, Long> FART_COOLDOWNS = new HashMap<>();
 
     // FART VISIBILITY / SOUND
-    private static final double FART_SOUND_RADIUS = 16.0;
+    private static final double FART_SOUND_RADIUS = 32.0;
     private static final double FART_SOUND_RADIUS_SQUARED = FART_SOUND_RADIUS * FART_SOUND_RADIUS;
 
     // FART AREA OF EFFECT
