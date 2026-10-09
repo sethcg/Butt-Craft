@@ -27,11 +27,7 @@ public final class FartGas {
         // TOUCH THE PIPELINE SO IT IS REGISTERED BEFORE THE FIRST RESOURCE RELOAD COMPILES SHADERS.
         FartGasRenderer.PIPELINE.getLocation();
 
-        ClientLifecycleEvents.CLIENT_STARTED.register(client -> FartGasNoise.startGenerating());
-        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
-            RENDERER.close();
-            FartGasNoise.close();
-        });
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> RENDERER.close());
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             // DROP ALL GAS WHEN LEAVING A WORLD OR CHANGING DIMENSION.

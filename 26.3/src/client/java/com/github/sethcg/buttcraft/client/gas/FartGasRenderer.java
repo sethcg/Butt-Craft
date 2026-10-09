@@ -29,12 +29,14 @@ import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.client.renderer.MappableRingBuffer;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.phys.Vec3;
@@ -58,6 +60,11 @@ public final class FartGasRenderer {
 
     private static final Vector3fc GAS_ALBEDO = new Vector3f(0.64F, 0.74F, 0.40F);
     private static final float GAS_DENSITY = 1.6F;
+
+    // PRE-BAKED, SEAMLESSLY TILING 64x64x64 NOISE VOLUME STORED AS A 2D ATLAS:
+    // 64 SLICES OF 64x64 WITH A 1px WRAPPED GUTTER, IN AN 8x8 GRID (528x528 RGBA).
+    //   R = PERLIN-WORLEY, G = WORLEY FBM (LOW), B = WORLEY FBM (HIGH), A = PERLIN FBM
+    private static final Identifier NOISE_TEXTURE = ButtCraft.id("textures/misc/fart_gas_noise.png");
 
     private static final int UBO_SIZE;
 
@@ -119,10 +126,7 @@ public final class FartGasRenderer {
             return;
         }
 
-        GpuTextureView noise = FartGasNoise.textureView();
-        if (noise == null) {
-            return;
-        }
+        GpuTextureView noise = Minecraft.getInstance().getTextureManager().getTexture(NOISE_TEXTURE).getTextureView();
 
         // THE PIPELINE READS THE LEVEL PROJECTION AND FOG BUFFERS SET UP BY VANILLA.
         if (RenderSystem.getProjectionMatrixBuffer() == null || RenderSystem.getShaderFog() == null) {
