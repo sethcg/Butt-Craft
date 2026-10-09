@@ -20,10 +20,15 @@ Whether you're defending your base, clearing a cave, or just asserting dominance
 - ☁️ **Volumetric gas** — Every fart releases a GPU ray-marched, physically simulated gas cloud.
 - 😭 **Bring a tear to their eyes** — For obvious reasons.
 
-## Requirements
+## Version Support
 
-- Minecraft 26.3 or newer
-- Fabric Loader and Fabric API
+- 🧵 **Mod Loader:** Fabric
+- 📦 **Dependency:** Fabric API
+
+| Minecraft Version | Support     |
+|:-----------|:------------------:|
+| 26.3+      | ✅ Supported      |
+| Below 26.3 | ❌ Not Supported  |
 
 ## Developer Notes:
 
