@@ -7,9 +7,9 @@
 // =============================================================================
 // BUTTCRAFT VOLUMETRIC FART GAS
 //
-// FULLSCREEN RAY MARCHER. THE CPU SIMULATES A SET OF SPHERICAL GAS "PUFFS"
-// (POSITION, RADIUS, DENSITY, LOCAL LIGHT LEVEL). THIS SHADER TURNS THEM INTO A
-// CONTINUOUS PARTICIPATING MEDIUM:
+// REDUCED-RESOLUTION RAY MARCHER (UPSCALED BY fart_gas_composite.fsh). THE CPU
+// SIMULATES A SET OF SPHERICAL GAS "PUFFS" (POSITION, RADIUS, DENSITY, LOCAL
+// LIGHT LEVEL). THIS SHADER TURNS THEM INTO A CONTINUOUS PARTICIPATING MEDIUM:
 //
 //   1. INTERSECT THE VIEW RAY WITH EVERY PUFF'S BOUNDING SPHERE.
 //   2. MARCH THE UNION OF THOSE INTERVALS, CLIPPED BY THE SCENE DEPTH BUFFER.
@@ -19,10 +19,10 @@
 //      DUAL-LOBE HENYEY-GREENSTEIN PHASE FUNCTION, A MULTIPLE-SCATTERING
 //      OCTAVE APPROXIMATION, SKY AMBIENT AND BLOCK LIGHT.
 //   5. INTEGRATE WITH ENERGY-CONSERVING BEER-LAMBERT STEPS AND APPLY VANILLA
-//      FOG. OUTPUT IS PREMULTIPLIED ALPHA.
+//      FOG. OUTPUT IS PREMULTIPLIED ALPHA INTO A CLEARED REDUCED-RESOLUTION TARGET.
 // =============================================================================
 
-#define MAX_PUFFS 96
+#define MAX_PUFFS 64
 #define MAX_HITS 24
 
 layout(std140) uniform FartGasInfo {
@@ -32,7 +32,7 @@ layout(std140) uniform FartGasInfo {
     vec4 LightColor;       // RGB = DIRECT LIGHT COLOR
     vec4 AmbientColor;     // RGB = SKY AMBIENT COLOR
     vec4 GasColor;         // RGB = SCATTERING ALBEDO, W = DENSITY MULTIPLIER
-    ivec4 Counts;          // X = PUFF COUNT, Y = MAX VIEW STEPS, Z = SHADOW STEPS
+    ivec4 Counts;          // X = PUFF COUNT, Y = MAX VIEW STEPS, Z = SHADOW STEPS, W = RESOLUTION DIVISOR
     vec4 Puffs[MAX_PUFFS * 2];
     // PUFFS[2I + 0] = CAMERA-RELATIVE CENTER XYZ, RADIUS
     // PUFFS[2I + 1] = DENSITY, SKY LIGHT (0-1), BLOCK LIGHT (0-1), SEED
@@ -66,6 +66,22 @@ const float NOISE_ATLAS = 528.0;
 const float WARP_SCALE = 4.0;
 const float SHAPE_SCALE = 1.5;
 const float DETAIL_SCALE = 0.5;
+
+// DISTANCE LOD (BLOCKS): VIEW STEPS GROW PAST STEP_LOD_START, AND THE DETAIL
+// OCTAVE FADES OUT BETWEEN DETAIL_LOD_START AND DETAIL_LOD_END.
+const float BASE_STEP = 0.05;
+const float STEP_LOD_START = 8.0;
+const float MAX_STEP_SCALE = 4.0;
+const float DETAIL_LOD_START = 16.0;
+const float DETAIL_LOD_END = 32.0;
+
+// STOP MARCHING ONCE THIS LITTLE OF THE BACKGROUND STILL SHOWS THROUGH.
+const float MIN_TRANSMITTANCE = 0.03;
+
+// SHADOW RAYS REACH THIS FAR (BLOCKS) WITH GEOMETRICALLY GROWING STEPS, WHATEVER
+// THE STEP COUNT, SO LOWER QUALITY GIVES COARSER SHADOWS RATHER THAN SHORTER ONES.
+const float SHADOW_REACH = 1.07;
+const float SHADOW_GROWTH = 1.8;
 
 // OPTICAL PROPERTIES (PER BLOCK AT DENSITY 1).
 const float EXTINCTION = 4.0;
@@ -159,8 +175,9 @@ vec3 warpOffset(vec3 wp, float time) {
     return (vec3(n.a, n.g, n.b) - 0.5) * 2.2;
 }
 
-// FULL-QUALITY DENSITY FOR VIEW SAMPLES.
-float gasDensity(vec3 p, vec2 field, float height) {
+// FULL-QUALITY DENSITY FOR VIEW SAMPLES. DETAIL (0-1) SCALES THE HIGH-FREQUENCY
+// EROSION; AT 0 ITS NOISE FETCH IS SKIPPED.
+float gasDensity(vec3 p, vec2 field, float height, float detailAmount) {
     vec3 wp = p + NoiseOrigin.xyz;
     float time = NoiseOrigin.w;
     vec3 warp = warpOffset(wp, time);
@@ -174,11 +191,15 @@ float gasDensity(vec3 p, vec2 field, float height) {
         return 0.0;
     }
 
+    if (detailAmount <= 0.0) {
+        return density * field.y * GasColor.w;
+    }
+
     // DETAIL EROSION: BILLOWY ON TOP, WISPY UNDERNEATH, STRONGEST AT THE EDGES.
     vec4 detailNoise = noise3((wp + warp * 0.55) / DETAIL_SCALE + vec3(-0.012, 0.035, 0.009) * time);
     float detail = detailNoise.g * 0.6 + detailNoise.b * 0.4;
     detail = mix(1.0 - detail, detail, clamp(height * 1.6, 0.0, 1.0));
-    density = remap(density, detail * 0.55 * (1.0 - density * 0.45), 1.0);
+    density = mix(density, remap(density, detail * 0.55 * (1.0 - density * 0.45), 1.0), detailAmount);
 
     return density * field.y * GasColor.w;
 }
@@ -228,8 +249,12 @@ void main() {
     vec3 ro = viewToWorld * nearView;
     vec3 rd = normalize(viewToWorld * (farView - nearView));
 
-    // DISTANCE ALONG THE RAY TO THE OPAQUE SCENE (SKY = 0 = INFINITELY FAR).
-    float deviceDepth = texture(DepthSampler, texCoord).r;
+    // DISTANCE ALONG THE RAY TO THE OPAQUE SCENE (SKY = 0 = INFINITELY FAR). THIS PASS
+    // IS REDUCED RESOLUTION: EACH PIXEL READS THE FULL-RESOLUTION DEPTH AT THE CENTER OF
+    // THE BLOCK IT COVERS, THE SAME TEXEL THE COMPOSITE PASS COMPARES AGAINST WHEN UPSCALING.
+    int divisor = max(Counts.w, 1);
+    ivec2 depthCoord = min(ivec2(gl_FragCoord.xy) * divisor + divisor / 2, textureSize(DepthSampler, 0) - 1);
+    float deviceDepth = texelFetch(DepthSampler, depthCoord, 0).r;
     float sceneT = 1e9;
     if (deviceDepth > 0.0) {
         sceneT = max(dot(viewToWorld * unprojectView(deviceDepth) - ro, rd), 0.0);
@@ -272,13 +297,28 @@ void main() {
     // 2. MARCH SETUP.
     float jitter = interleavedGradientNoise(gl_FragCoord.xy);
     float span = tEnd - tStart;
-    int steps = int(clamp(ceil(span / 0.05), 12.0, float(max(Counts.y, 12))));
+    // DISTANT GAS COVERS FEW PIXELS AND DOESN'T NEED FINE STEPS.
+    float stepSize = BASE_STEP * clamp(tStart / STEP_LOD_START, 1.0, MAX_STEP_SCALE);
+    int steps = int(clamp(ceil(span / stepSize), 12.0, float(max(Counts.y, 12))));
     float dt = span / float(steps);
 
     vec3 lightDir = normalize(LightDirection.xyz);
     float cosTheta = dot(rd, lightDir);
     float directStrength = LightDirection.w;
     int shadowSteps = max(Counts.z, 1);
+    float firstShadowStep = SHADOW_REACH * (SHADOW_GROWTH - 1.0) / (pow(SHADOW_GROWTH, float(shadowSteps)) - 1.0);
+
+    // THE PHASE FUNCTION ONLY DEPENDS ON THE VIEW/LIGHT ANGLE, SO EVALUATE THE
+    // MULTIPLE-SCATTERING OCTAVES' LOBES ONCE PER PIXEL INSTEAD OF PER SAMPLE.
+    float phase0 = phase(cosTheta, 1.0);
+    float phase1 = phase(cosTheta, 0.5) * 0.5;
+    float phase2 = phase(cosTheta, 0.25) * 0.25;
+    float powderMix = 0.35 * (1.0 - cosTheta) * 0.5;
+
+    // SHADOWS CHANGE SLOWLY ALONG THE RAY, SO THE SHADOW MARCH RUNS ON EVERY OTHER
+    // LIT SAMPLE AND THE SAMPLE IN BETWEEN REUSES ITS OPTICAL DEPTH.
+    float cachedOpticalDepth = 0.0;
+    int litSamples = 0;
 
     float transmittance = 1.0;
     vec3 radiance = vec3(0.0);
@@ -287,7 +327,7 @@ void main() {
 
     float t = tStart + dt * jitter;
     for (int s = 0; s < 256; s++) {
-        if (s >= steps || transmittance < 0.01) {
+        if (s >= steps || transmittance < MIN_TRANSMITTANCE) {
             break;
         }
 
@@ -296,46 +336,11 @@ void main() {
         vec2 field = puffField(p, info);
 
         if (field.x > 0.002) {
-            float density = gasDensity(p, field, info.z);
+            float detailAmount = 1.0 - smoothstep(DETAIL_LOD_START, DETAIL_LOD_END, t);
+            float density = gasDensity(p, field, info.z, detailAmount);
 
             if (density > 0.001) {
                 float sigmaT = density * EXTINCTION;
-
-                // 3. SHADOW MARCH TOWARD THE LIGHT WITH GEOMETRICALLY GROWING STEPS.
-                float opticalDepth = 0.0;
-                if (directStrength > 0.001) {
-                    float lightStep = 0.09;
-                    float lightT = lightStep * (0.5 + jitter * 0.5);
-                    for (int l = 0; l < 8; l++) {
-                        if (l >= shadowSteps) {
-                            break;
-                        }
-
-                        opticalDepth += gasDensityLow(p + lightDir * lightT) * lightStep;
-                        lightStep *= 1.8;
-                        lightT += lightStep;
-                    }
-
-                    opticalDepth *= EXTINCTION;
-                }
-
-                // MULTIPLE-SCATTERING OCTAVES: EACH OCTAVE ATTENUATES LESS, SCATTERS LESS
-                // AND IS MORE ISOTROPIC, BRIGHTENING THICK GAS LIKE REAL SMOKE.
-                float direct = 0.0;
-                float a = 1.0;
-                float bScale = 1.0;
-                float cScale = 1.0;
-                for (int o = 0; o < 3; o++) {
-                    direct += bScale * exp(-opticalDepth * a) * phase(cosTheta, cScale);
-                    a *= 0.42;
-                    bScale *= 0.5;
-                    cScale *= 0.5;
-                }
-                direct *= 1.0 / 1.75;
-
-                // POWDER TERM: DARKENS THIN EDGES FACING AWAY FROM THE LIGHT.
-                float powder = 1.0 - exp(-sigmaT * 1.6);
-                direct *= mix(1.0, powder * 1.6, 0.35 * (1.0 - cosTheta) * 0.5);
 
                 float skyLight = info.x;
                 float blockLight = info.y;
@@ -343,7 +348,44 @@ void main() {
 
                 // DIRECT LIGHT IS GATED BY THE PUFF'S SKY ACCESS (NO SUN IN CAVES).
                 float sunVisibility = directStrength * smoothstep(0.35, 0.95, skyLight);
-                vec3 directLight = LightColor.rgb * direct * sunVisibility;
+                vec3 directLight = vec3(0.0);
+
+                // 3. SHADOW MARCH TOWARD THE LIGHT WITH GEOMETRICALLY GROWING STEPS.
+                // SKIPPED ENTIRELY WHEN NO DIRECT LIGHT REACHES THIS SAMPLE.
+                if (sunVisibility > 0.001) {
+                    if ((litSamples & 1) == 0) {
+                        cachedOpticalDepth = 0.0;
+                        float lightStep = firstShadowStep;
+                        float lightT = lightStep * (0.5 + jitter * 0.5);
+                        for (int l = 0; l < 8; l++) {
+                            if (l >= shadowSteps) {
+                                break;
+                            }
+
+                            cachedOpticalDepth += gasDensityLow(p + lightDir * lightT) * lightStep;
+                            lightStep *= SHADOW_GROWTH;
+                            lightT += lightStep;
+                        }
+
+                        cachedOpticalDepth *= EXTINCTION;
+                    }
+
+                    litSamples++;
+                    float opticalDepth = cachedOpticalDepth;
+
+                    // MULTIPLE-SCATTERING OCTAVES: EACH OCTAVE ATTENUATES LESS, SCATTERS LESS
+                    // AND IS MORE ISOTROPIC, BRIGHTENING THICK GAS LIKE REAL SMOKE.
+                    float direct = exp(-opticalDepth) * phase0
+                        + exp(-opticalDepth * 0.42) * phase1
+                        + exp(-opticalDepth * 0.1764) * phase2;
+                    direct *= 1.0 / 1.75;
+
+                    // POWDER TERM: DARKENS THIN EDGES FACING AWAY FROM THE LIGHT.
+                    float powder = 1.0 - exp(-sigmaT * 1.6);
+                    direct *= mix(1.0, powder * 1.6, powderMix);
+
+                    directLight = LightColor.rgb * direct * sunVisibility;
+                }
 
                 // AMBIENT: SKY LIGHT WITH HEIGHT-BASED OCCLUSION + WARM BLOCK LIGHT.
                 float ambientOcclusion = mix(0.45, 1.0, height) * mix(0.6, 1.0, exp(-density * 1.5));

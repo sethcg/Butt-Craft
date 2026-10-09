@@ -32,11 +32,13 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  *   <li>BLOCK COLLISIONS THAT DEFLECT AND SPREAD GAS ALONG SURFACES</li>
  *   <li>ENTITIES STIRRING THE GAS AS THEY MOVE THROUGH IT</li>
  *   <li>PER-PUFF SKY/BLOCK LIGHT SAMPLING FOR LIGHTING</li>
+ *   <li>A PUFF BUDGET: WHEN FULL, THE MOST-OVERLAPPING SETTLED PUFFS MERGE INTO ONE</li>
  * </ul>
  */
 public final class FartGasSimulation {
 
-    public static final int MAX_PUFFS = 96;
+    /** HARD CAP, SIZED TO THE SHADER'S PUFF ARRAY. THE ACTIVE BUDGET MAY BE LOWER. */
+    public static final int MAX_PUFFS = 64;
 
     // EMISSION
     private static final int EMIT_TICKS = 7;
@@ -59,6 +61,9 @@ public final class FartGasSimulation {
     private static final float DIFFUSION = 0.0065F;
     private static final float ENTRAINMENT = 0.16F;
     private static final float MAX_RADIUS = 1.9F;
+
+    // MERGING: ONLY PUFFS THIS OLD MERGE, SO THE TURBULENT JET KEEPS ITS SMALL PUFFS.
+    private static final int MERGE_MIN_AGE = 12;
 
     private final List<Puff> puffs = new ArrayList<>();
     private final List<Emitter> emitters = new ArrayList<>();
@@ -167,8 +172,12 @@ public final class FartGasSimulation {
     }
 
     private void spawnPuff(ClientLevel level, Emitter emitter) {
-        while (this.puffs.size() >= MAX_PUFFS) {
-            this.puffs.remove(0);
+        // A LOWERED BUDGET (SETTING CHANGED MID-CLOUD) IS REACHED BY MERGING HERE TOO.
+        int budget = Mth.clamp(FartGasSettings.current().puffBudget(), 1, MAX_PUFFS);
+        while (this.puffs.size() >= budget) {
+            if (!this.mergeClosestPair()) {
+                this.puffs.remove(0);
+            }
         }
 
         // JET STRENGTH DECAYS OVER THE EMISSION.
@@ -235,6 +244,49 @@ public final class FartGasSimulation {
                 b.vz += dz * push * ma / total;
             }
         }
+    }
+
+    /**
+     * MERGES THE SETTLED PAIR WITH THE MOST OVERLAP (SMALLEST DISTANCE RELATIVE TO
+     * THEIR RADII) INTO ONE BIGGER PUFF. RETURNS FALSE IF NO PAIR IS OLD ENOUGH.
+     */
+    private boolean mergeClosestPair() {
+        int size = this.puffs.size();
+        int bestA = -1;
+        int bestB = -1;
+        double best = Double.MAX_VALUE;
+        for (int i = 0; i < size; i++) {
+            Puff a = this.puffs.get(i);
+            if (a.age < MERGE_MIN_AGE) {
+                continue;
+            }
+
+            for (int j = i + 1; j < size; j++) {
+                Puff b = this.puffs.get(j);
+                if (b.age < MERGE_MIN_AGE) {
+                    continue;
+                }
+
+                double dx = b.x - a.x;
+                double dy = b.y - a.y;
+                double dz = b.z - a.z;
+                double radii = a.radius + b.radius;
+                double score = (dx * dx + dy * dy + dz * dz) / (radii * radii);
+                if (score < best) {
+                    best = score;
+                    bestA = i;
+                    bestB = j;
+                }
+            }
+        }
+
+        if (bestA < 0) {
+            return false;
+        }
+
+        Puff b = this.puffs.remove(bestB);
+        this.puffs.get(bestA).absorb(b);
+        return true;
     }
 
     private void applyEntityStirring(ClientLevel level) {
@@ -423,8 +475,58 @@ public final class FartGasSimulation {
             float fadeOut = Mth.clamp((this.lifetime - age) / 60.0F, 0.0F, 1.0F);
             // SPREADING THE SAME MASS OVER A BIGGER PUFF THINS IT OUT. THE EXPONENT IS BELOW
             // THE PHYSICAL 3 BECAUSE THE VIEW RAY ALSO GETS LONGER THROUGH A BIGGER PUFF.
-            float dilution = (float) Math.pow(INITIAL_RADIUS * 2.0F / Math.max(r, INITIAL_RADIUS * 2.0F), 0.85);
-            return mass * dilution * fadeIn * fadeOut * fadeOut;
+            return mass * dilution(r) * fadeIn * fadeOut * fadeOut;
+        }
+
+        private static float dilution(float radius) {
+            return (float) Math.pow(INITIAL_RADIUS * 2.0F / Math.max(radius, INITIAL_RADIUS * 2.0F), 0.85);
+        }
+
+        /**
+         * MERGES ANOTHER PUFF INTO THIS ONE. VOLUME, MOMENTUM AND VOLUME-AVERAGED VISIBLE
+         * DENSITY ARE CONSERVED, SO THE CLOUD KEEPS ROUGHLY THE SAME SHAPE AND OPACITY.
+         */
+        void absorb(Puff other) {
+            float va = this.radius * this.radius * this.radius;
+            float vb = other.radius * other.radius * other.radius;
+            float wa = va / (va + vb);
+            float wb = 1.0F - wa;
+            float massWeightA = this.mass / (this.mass + other.mass);
+            float massWeightB = 1.0F - massWeightA;
+            if (massWeightB > massWeightA) {
+                this.seed = other.seed;
+            }
+
+            float targetDensity = this.mass * dilution(this.radius) * wa + other.mass * dilution(other.radius) * wb;
+            float prevTargetDensity = this.prevMass * dilution(this.prevRadius) * wa + other.prevMass * dilution(other.prevRadius) * wb;
+
+            this.x = this.x * wa + other.x * wb;
+            this.y = this.y * wa + other.y * wb;
+            this.z = this.z * wa + other.z * wb;
+            this.prevX = this.prevX * wa + other.prevX * wb;
+            this.prevY = this.prevY * wa + other.prevY * wb;
+            this.prevZ = this.prevZ * wa + other.prevZ * wb;
+            this.vx = this.vx * massWeightA + other.vx * massWeightB;
+            this.vy = this.vy * massWeightA + other.vy * massWeightB;
+            this.vz = this.vz * massWeightA + other.vz * massWeightB;
+
+            this.radius = Math.min((float) Math.cbrt(va + vb), MAX_RADIUS);
+            float prevVolume = this.prevRadius * this.prevRadius * this.prevRadius
+                + other.prevRadius * other.prevRadius * other.prevRadius;
+            this.prevRadius = Math.min((float) Math.cbrt(prevVolume), MAX_RADIUS);
+            this.mass = targetDensity / dilution(this.radius);
+            this.prevMass = prevTargetDensity / dilution(this.prevRadius);
+
+            this.temperature = this.temperature * massWeightA + other.temperature * massWeightB;
+            this.skyLight = this.skyLight * wa + other.skyLight * wb;
+            this.blockLight = this.blockLight * wa + other.blockLight * wb;
+            this.targetSkyLight = this.targetSkyLight * wa + other.targetSkyLight * wb;
+            this.targetBlockLight = this.targetBlockLight * wa + other.targetBlockLight * wb;
+
+            // LIVE AS LONG AS THE LONGER-LIVED HALF.
+            int remaining = Math.max(this.lifetime - this.age, other.lifetime - other.age);
+            this.age = Math.min(this.age, other.age);
+            this.lifetime = this.age + remaining;
         }
 
         public float skyLight() {

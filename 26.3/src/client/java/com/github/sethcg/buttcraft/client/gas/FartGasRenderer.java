@@ -7,16 +7,20 @@ import java.util.Optional;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.joml.Vector3fc;
+import org.joml.Vector4f;
+import org.joml.Vector4fc;
 import org.jspecify.annotations.Nullable;
 
 import com.github.sethcg.buttcraft.ButtCraft;
 import com.mojang.blaze3d.buffers.Std140Builder;
 import com.mojang.blaze3d.buffers.Std140SizeCalculator;
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
 import com.mojang.renderpearl.api.pipeline.BlendFunction;
@@ -42,17 +46,22 @@ import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * FULLSCREEN GPU RAY-MARCH PASS FOR THE FART GAS.
+ * REDUCED-RESOLUTION GPU RAY-MARCH PASS FOR THE FART GAS (SEE {@link FartGasSettings}).
  *
  * <p>RUNS AT {@code END_MAIN}, AFTER EVERY RENDER PASS OF THE MAIN STAGE HAS CLOSED
- * (WORKS WITH BOTH CLASSIC AND IMPROVED TRANSPARENCY). IT DRAWS ONE TRIANGLE INTO THE
- * MAIN COLOR TARGET WITH PREMULTIPLIED-ALPHA BLENDING WHILE SAMPLING THE MAIN DEPTH
- * TEXTURE. DEPTH IS NOT ATTACHED, SO THERE IS NO READ/WRITE FEEDBACK LOOP.
+ * (WORKS WITH BOTH CLASSIC AND IMPROVED TRANSPARENCY). TWO PASSES, BOTH DRAWING ONE
+ * QUAD SHRUNK TO THE PUFFS' SCREEN BOUNDS IN THE VERTEX SHADER:
+ *
+ * <ol>
+ *   <li>MARCH: RAY-MARCHES INTO A CLEARED REDUCED-RESOLUTION TARGET (PREMULTIPLIED ALPHA,
+ *   NO BLENDING), SAMPLING THE MAIN DEPTH TEXTURE.</li>
+ *   <li>COMPOSITE: DEPTH-AWARE UPSCALE, BLENDED ONTO THE MAIN COLOR TARGET WITH
+ *   PREMULTIPLIED-ALPHA BLENDING.</li>
+ * </ol>
+ *
+ * <p>DEPTH IS NEVER ATTACHED, SO THERE IS NO READ/WRITE FEEDBACK LOOP.
  */
 public final class FartGasRenderer {
-
-    private static final int MAX_VIEW_STEPS = 64;
-    private static final int SHADOW_STEPS = 4;
 
     // CAMERA POSITION IS WRAPPED BY THE LCM OF THE SHADER'S NOISE PERIODS (4, 1.5, 0.5 BLOCKS).
     private static final double NOISE_PERIOD = 12.0;
@@ -64,7 +73,7 @@ public final class FartGasRenderer {
     // PRE-BAKED, SEAMLESSLY TILING 64x64x64 NOISE VOLUME STORED AS A 2D ATLAS:
     // 64 SLICES OF 64x64 WITH A 1px WRAPPED GUTTER, IN AN 8x8 GRID (528x528 RGBA).
     //   R = PERLIN-WORLEY, G = WORLEY FBM (LOW), B = WORLEY FBM (HIGH), A = PERLIN FBM
-    private static final Identifier NOISE_TEXTURE = ButtCraft.id("textures/misc/fart_gas_noise.png");
+    private static final Identifier NOISE_TEXTURE = ButtCraft.id("textures/fart_gas_noise.png");
 
     private static final int UBO_SIZE;
 
@@ -96,6 +105,25 @@ public final class FartGasRenderer {
                 .withUniform("DepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
                 .build())
             .withColorTargetState(new ColorTargetState(
+                Optional.empty(),
+                GpuFormat.RGBA8_UNORM,
+                ColorTargetState.WRITE_ALL))
+            .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+            .withCull(false)
+            .build());
+
+    public static final RenderPipeline COMPOSITE_PIPELINE = RenderPipelines.registerOptional(
+        RenderPipeline.builder()
+            .withLocation(ButtCraft.id("pipeline/fart_gas_composite"))
+            .withVertexShader(ButtCraft.id("core/fart_gas"))
+            .withFragmentShader(ButtCraft.id("core/fart_gas_composite"))
+            .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+            .withBindGroupLayout(BindGroupLayout.builder()
+                .withUniform("FartGasInfo", UniformType.UNIFORM_BUFFER)
+                .withUniform("GasSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+                .withUniform("DepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+                .build())
+            .withColorTargetState(new ColorTargetState(
                 Optional.of(BlendFunction.TRANSLUCENT_PREMULTIPLIED_ALPHA),
                 GpuFormat.RGBA8_UNORM,
                 ColorTargetState.WRITE_ALL))
@@ -103,8 +131,11 @@ public final class FartGasRenderer {
             .withCull(false)
             .build());
 
+    private static final Optional<Vector4fc> CLEAR_TRANSPARENT = Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 0.0F));
+
     private final FartGasSimulation simulation;
     private @Nullable MappableRingBuffer ubo;
+    private @Nullable TextureTarget gasTarget;
     private boolean warnedMissingPipeline;
 
     public FartGasRenderer(FartGasSimulation simulation) {
@@ -118,7 +149,8 @@ public final class FartGasRenderer {
         }
 
         CompiledRenderPipeline pipeline = RenderSystem.getCompiledPipelineNullable(PIPELINE);
-        if (pipeline == null) {
+        CompiledRenderPipeline compositePipeline = RenderSystem.getCompiledPipelineNullable(COMPOSITE_PIPELINE);
+        if (pipeline == null || compositePipeline == null) {
             if (!this.warnedMissingPipeline) {
                 this.warnedMissingPipeline = true;
                 ButtCraft.LOGGER.warn("FART GAS PIPELINE IS NOT AVAILABLE (SHADER FAILED TO COMPILE?). GAS WILL NOT RENDER.");
@@ -144,20 +176,40 @@ public final class FartGasRenderer {
             this.ubo = new MappableRingBuffer(() -> "ButtCraft fart gas UBO", GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_MAP_WRITE, UBO_SIZE);
         }
 
+        // READ ONCE SO THE UNIFORMS AND THE TARGET SIZE AGREE EVEN IF THE SETTING CHANGES MID-FRAME.
+        FartGasSettings.Values quality = FartGasSettings.current();
+
         GpuBuffer buffer = this.ubo.currentBuffer();
         try (GpuBufferSlice.MappedView view = buffer.slice().map(false, true)) {
-            this.writeUniforms(view.data(), context.levelState(), puffs);
+            this.writeUniforms(view.data(), context.levelState(), puffs, quality);
         }
 
-        try (RenderPass pass = RenderSystem.getDevice()
-                .createCommandEncoder()
-                .createRenderPass(() -> "ButtCraft fart gas", colorView, Optional.empty())) {
+        GpuTextureView gasView = this.gasTarget(mainTarget.width, mainTarget.height, quality).getColorTextureView();
+        if (gasView == null) {
+            return;
+        }
+
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+
+        // 1. MARCH AT REDUCED RESOLUTION. THE CLEAR MATTERS: THE UPSCALE READS TEXELS JUST
+        // OUTSIDE THE QUAD, WHICH MUST BE EMPTY RATHER THAN LAST FRAME'S GAS.
+        try (RenderPass pass = encoder.createRenderPass(() -> "ButtCraft fart gas march", gasView, CLEAR_TRANSPARENT)) {
             RenderSystem.bindDefaultUniforms(pass);
             pass.setPipeline(pipeline);
             pass.setUniform("FartGasInfo", buffer);
             pass.setUniform("NoiseSampler", noise, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
             pass.setUniform("DepthSampler", depthView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
-            pass.draw(3, 1, 0, 0);
+            pass.draw(6, 1, 0, 0);
+        }
+
+        // 2. DEPTH-AWARE UPSCALE ONTO THE SCENE.
+        try (RenderPass pass = encoder.createRenderPass(() -> "ButtCraft fart gas composite", colorView, Optional.empty())) {
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setPipeline(compositePipeline);
+            pass.setUniform("FartGasInfo", buffer);
+            pass.setUniform("GasSampler", gasView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+            pass.setUniform("DepthSampler", depthView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+            pass.draw(6, 1, 0, 0);
         }
 
         this.ubo.rotate();
@@ -168,9 +220,28 @@ public final class FartGasRenderer {
             this.ubo.close();
             this.ubo = null;
         }
+
+        if (this.gasTarget != null) {
+            this.gasTarget.destroyBuffers();
+            this.gasTarget = null;
+        }
     }
 
-    private void writeUniforms(ByteBuffer data, LevelRenderState levelState, List<FartGasSimulation.Puff> puffs) {
+    /** REDUCED-RESOLUTION MARCH TARGET, (RE)SIZED TO FOLLOW THE MAIN TARGET. */
+    private TextureTarget gasTarget(int fullWidth, int fullHeight, FartGasSettings.Values quality) {
+        int divisor = quality.resolutionDivisor();
+        int width = Math.max((fullWidth + divisor - 1) / divisor, 1);
+        int height = Math.max((fullHeight + divisor - 1) / divisor, 1);
+        if (this.gasTarget == null) {
+            this.gasTarget = new TextureTarget("ButtCraft fart gas", width, height, GpuFormat.RGBA8_UNORM, null);
+        } else if (this.gasTarget.width != width || this.gasTarget.height != height) {
+            this.gasTarget.resize(width, height);
+        }
+
+        return this.gasTarget;
+    }
+
+    private void writeUniforms(ByteBuffer data, LevelRenderState levelState, List<FartGasSimulation.Puff> puffs, FartGasSettings.Values quality) {
         CameraRenderState camera = levelState.cameraRenderState;
         SkyRenderState sky = levelState.skyRenderState;
         float partial = levelState.worldPartialTicks;
@@ -192,7 +263,7 @@ public final class FartGasRenderer {
         builder.putVec4(GAS_ALBEDO.x(), GAS_ALBEDO.y(), GAS_ALBEDO.z(), GAS_DENSITY);
 
         int count = Math.min(puffs.size(), FartGasSimulation.MAX_PUFFS);
-        builder.putIVec4(count, MAX_VIEW_STEPS, SHADOW_STEPS, 0);
+        builder.putIVec4(count, quality.maxViewSteps(), quality.shadowSteps(), quality.resolutionDivisor());
 
         for (int i = 0; i < FartGasSimulation.MAX_PUFFS; i++) {
             if (i < count) {

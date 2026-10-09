@@ -1,4 +1,23 @@
 {
   "key.buttcraft.fart": "Engage Rear Thrusters",
-  "key.category.buttcraft.buttcraft": "ButtCraft"
+  "key.category.buttcraft.buttcraft": "Butt-Craft",
+
+  "options.buttcraft.header": "Butt-Craft",
+  "options.buttcraft.gas_quality": "Gas Quality",
+  "options.buttcraft.gas_quality.low": "Low",
+  "options.buttcraft.gas_quality.medium": "Medium",
+  "options.buttcraft.gas_quality.high": "High",
+  "options.buttcraft.gas_quality.custom": "Custom",
+  "options.buttcraft.gas_quality.tooltip": "Sets all gas options at once. Lower runs faster.",
+  "options.buttcraft.gas_resolution": "Gas Resolution",
+  "options.buttcraft.gas_resolution.1": "Full",
+  "options.buttcraft.gas_resolution.2": "Half",
+  "options.buttcraft.gas_resolution.4": "Quarter",
+  "options.buttcraft.gas_resolution.tooltip": "How sharp the gas looks. Lower is blurrier but faster.",
+  "options.buttcraft.gas_detail": "Gas Detail",
+  "options.buttcraft.gas_detail.tooltip": "How smooth the gas looks. Lower is faster but can look grainy.",
+  "options.buttcraft.gas_shading": "Gas Shading",
+  "options.buttcraft.gas_shading.tooltip": "How realistic the shadows inside the gas look. Lower is faster.",
+  "options.buttcraft.gas_puffs": "Max Gas Clouds",
+  "options.buttcraft.gas_puffs.tooltip": "How many gas clouds can exist at once. Extras blend together. Lower is faster."
 }
