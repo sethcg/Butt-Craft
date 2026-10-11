@@ -14,9 +14,9 @@ Whether you're defending your base, clearing a cave, or just asserting dominance
 
 ## Features
 
-- 💨 **Fart-based combat** — A revolutionary new weapon.
+- ⚔️ **Fart-based combat** — A revolutionary new weapon.
 - 💥 **Damage enemies** — Your farts actually hurt.
-- 🪽 **Knockback** — Send mobs flying.
+- 💨 **Knockback** — Send mobs flying.
 - ☁️ **Volumetric gas** — Every fart releases a GPU ray-marched, physically simulated gas cloud.
 - 😭 **Bring a tear to their eyes** — For obvious reasons.
 
