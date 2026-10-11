@@ -35,4 +35,4 @@ jobs:
         with:
           name: buttcraft-${{ github.sha }}
           path: |
-            26.3/build/libs/*.jar
+            */build/libs/*.jar

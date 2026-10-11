@@ -53,7 +53,7 @@ public class ButtCraft implements ModInitializer {
         // REGISTER CUSTOM SOUND
         ModSounds.initialize();
 
-        // VERSION-SPECIFIC NETWORKING REGISTRATION
+        // REGISTER PACKET PAYLOADS
         Networking.registerPayloads();
 
         // RECEIVE FART REQUESTS FROM CLIENTS

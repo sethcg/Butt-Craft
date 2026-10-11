@@ -11,7 +11,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 
 /**
- * ENTRY POINT FOR THE VOLUMETRIC FART GAS (MINECRAFT 26.3).
+ * ENTRY POINT FOR THE VOLUMETRIC FART GAS.
  *
  * <p>SIMULATION RUNS ON THE CLIENT TICK; THE GPU RAY MARCHER DRAWS AT THE END OF THE
  * MAIN WORLD PASS.
@@ -29,8 +29,7 @@ public final class FartGas {
         FartGasSettings.load();
         ButtCraft.LOGGER.info("FART GAS SETTINGS: {} ({}).", FartGasSettings.current(), FartGasSettings.preset());
 
-        // TOUCH THE PIPELINE SO IT IS REGISTERED BEFORE THE FIRST RESOURCE RELOAD COMPILES SHADERS.
-        FartGasRenderer.PIPELINE.getLocation();
+        FartGasRenderer.initialize();
 
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> RENDERER.close());
 
