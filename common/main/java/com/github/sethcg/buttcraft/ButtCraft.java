@@ -56,6 +56,9 @@ public class ButtCraft implements ModInitializer {
         // REGISTER PACKET PAYLOADS
         Networking.registerPayloads();
 
+        // TICK THE POISONOUS GAS CLOUDS LEFT BEHIND BY FARTS
+        FartClouds.initialize();
+
         // RECEIVE FART REQUESTS FROM CLIENTS
         ServerPlayNetworking.registerGlobalReceiver(
             FartRequestPayload.TYPE,
@@ -108,6 +111,9 @@ public class ButtCraft implements ModInitializer {
 
         // DAMAGE AND KNOCK BACK ENTITIES AROUND THE PLAYER
         affectNearbyEntities(player, level);
+
+        // LEAVE A POISONOUS CLOUD WHERE THE GAS WILL BE
+        FartClouds.spawn(level, player);
 
         // CREATE THE PAYLOAD THAT WILL BE SENT TO NEARBY CLIENTS
         FartPayload fart = new FartPayload(x, y, z, yaw);

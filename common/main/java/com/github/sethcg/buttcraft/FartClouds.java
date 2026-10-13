@@ -1,0 +1,208 @@
+package com.github.sethcg.buttcraft;
+
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.CollisionContext;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * SERVER-SIDE POISON AREA FOR EACH FART.
+ *
+ * <p>THE VISIBLE GAS IS SIMULATED PER CLIENT, SO THE SERVER CAN'T SEE IT. INSTEAD EACH
+ * FART GETS ONE SPHERE THAT ROUGHLY FOLLOWS THE CLOUD: IT STARTS SMALL BEHIND THE PLAYER,
+ * DRIFTS BACKWARD WITH THE JET AND GROWS AS THE GAS SPREADS OUT.
+ */
+public final class FartClouds {
+
+    // ONE DOSE = A SHORT POISON EFFECT PLUS ONE HIT OF GAS DAMAGE (20 TICKS = 1 SECOND).
+    // POISON I ONLY HURTS EVERY 25 TICKS, SO THE 1 SECOND EFFECT IS JUST THE GREEN HEARTS;
+    // THE DAMAGE COMES FROM THE GAS ITSELF SO THE FARTER GETS THE CREDIT AND IT CAN KILL.
+    private static final int DOSE_INTERVAL_TICKS = 20;
+    private static final int POISON_DURATION_TICKS = 20;
+    private static final int POISON_AMPLIFIER = 0;
+
+    // GAS DAMAGE PER DOSE (2.0 = 1 HEART)
+    private static final float GAS_DAMAGE = 1.0F;
+
+    // THE FARTER IS IMMUNE TO THEIR OWN GAS FOR THIS LONG, SO THEY CAN WALK AWAY FROM IT
+    private static final int OWNER_GRACE_TICKS = 40;
+
+    // HOW LONG THE CLOUD STAYS POISONOUS. THE GAS PUFFS LIVE 150-240 TICKS AND ARE
+    // MOSTLY FADED OUT FOR THE LAST PART OF THAT.
+    private static final int CLOUD_LIFETIME_TICKS = 180;
+
+    // SHAPE: KEEP ROUGHLY IN SYNC WITH THE CLIENT'S FartGasSimulation.
+    private static final double ORIGIN_HEIGHT = 0.7;
+    private static final double ORIGIN_BEHIND = 0.36;
+    private static final double INITIAL_RADIUS = 0.28;
+    private static final double DIFFUSION = 0.0065;
+    private static final double JET_DISTANCE = 1.4;
+    private static final double JET_SPREAD = 0.7;
+    private static final double JET_TICKS = 8.0;
+
+    // KEEP THE CENTER THIS FAR OFF A WALL THE JET RUNS INTO
+    private static final double WALL_MARGIN = 0.1;
+
+    private static final List<Cloud> CLOUDS = new ArrayList<>();
+
+    // TRACK WHEN EACH ENTITY CAN BE DOSED AGAIN (SHARED BY ALL CLOUDS, SO THEY DON'T STACK)
+    private static final Map<UUID, Long> NEXT_DOSES = new HashMap<>();
+
+    private FartClouds() {
+    }
+
+    public static void initialize() {
+        ServerTickEvents.END_LEVEL_TICK.register(FartClouds::tick);
+
+        // FORGET DOSE TIMERS THAT HAVE RUN OUT
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            long currentTick = server.overworld().getGameTime();
+            NEXT_DOSES.values().removeIf(nextDose -> currentTick >= nextDose);
+        });
+
+        // DROP ALL CLOUDS WHEN THE SERVER STOPS (E.G. LEAVING A SINGLEPLAYER WORLD)
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            CLOUDS.clear();
+            NEXT_DOSES.clear();
+        });
+    }
+
+    public static void spawn(ServerLevel level, ServerPlayer owner) {
+        double yaw = Math.toRadians(owner.getYRot());
+        Vec3 backward = new Vec3(Math.sin(yaw), 0.0, -Math.cos(yaw));
+        Vec3 origin = owner.position().add(0.0, ORIGIN_HEIGHT, 0.0);
+
+        // THE GAS PILES UP AGAINST A WALL BEHIND THE PLAYER INSTEAD OF PASSING THROUGH IT
+        double maxOffset = ORIGIN_BEHIND + JET_DISTANCE;
+        BlockHitResult wall = clip(level, origin, origin.add(backward.scale(maxOffset)));
+        if (wall.getType() != HitResult.Type.MISS) {
+            maxOffset = Math.max(0.0, wall.getLocation().distanceTo(origin) - WALL_MARGIN);
+        }
+
+        CLOUDS.add(new Cloud(level.dimension(), owner.getUUID(), origin, backward, maxOffset));
+    }
+
+    private static void tick(ServerLevel level) {
+        long currentTick = level.getGameTime();
+
+        for (int i = CLOUDS.size() - 1; i >= 0; i--) {
+            Cloud cloud = CLOUDS.get(i);
+            if (cloud.dimension != level.dimension()) {
+                continue;
+            }
+
+            if (cloud.age >= CLOUD_LIFETIME_TICKS) {
+                CLOUDS.remove(i);
+                continue;
+            }
+
+            // THE JET CARRIES THE GAS BACKWARD AND FANS IT OUT, THEN IT SLOWLY DIFFUSES
+            double jet = 1.0 - Math.exp(-cloud.age / JET_TICKS);
+            double offset = Math.min(ORIGIN_BEHIND + JET_DISTANCE * jet, cloud.maxOffset);
+            Vec3 center = cloud.origin.add(cloud.backward.scale(offset));
+            double radius = Math.sqrt(INITIAL_RADIUS * INITIAL_RADIUS + DIFFUSION * cloud.age)
+                + JET_SPREAD * jet;
+            double radiusSquared = radius * radius;
+            boolean ownerImmune = cloud.age < OWNER_GRACE_TICKS;
+
+            // FIND ALL LIVING ENTITIES (PLAYERS AND MOBS) TOUCHING THE SPHERE
+            List<LivingEntity> entities = level.getEntitiesOfClass(
+                LivingEntity.class,
+                AABB.ofSize(center, radius * 2.0, radius * 2.0, radius * 2.0),
+                entity ->
+                    entity.isAlive()
+                    && !entity.isSpectator()
+                    && !(ownerImmune && entity.getUUID().equals(cloud.owner))
+                    && entity.getBoundingBox().distanceToSqr(center) <= radiusSquared
+            );
+
+            for (LivingEntity entity : entities) {
+                // ENTITY WAS DOSED RECENTLY
+                Long nextDose = NEXT_DOSES.get(entity.getUUID());
+                if (nextDose != null && currentTick < nextDose) {
+                    continue;
+                }
+
+                // POISON-IMMUNE MOBS (UNDEAD, SPIDERS) DON'T MIND THE GAS
+                MobEffectInstance poison = new MobEffectInstance(
+                    MobEffects.POISON,
+                    POISON_DURATION_TICKS,
+                    POISON_AMPLIFIER
+                );
+                if (!entity.canBeAffected(poison)) {
+                    continue;
+                }
+
+                // THE GAS DOESN'T GO THROUGH WALLS
+                if (!canReach(level, center, entity)) {
+                    continue;
+                }
+
+                // CREDIT THE FARTER (IF THEY ARE STILL ONLINE)
+                ServerPlayer owner = level.getServer().getPlayerList().getPlayer(cloud.owner);
+
+                NEXT_DOSES.put(entity.getUUID(), currentTick + DOSE_INTERVAL_TICKS);
+                entity.addEffect(poison, owner);
+                entity.hurtServer(level, FartGasDamageSource.create(level, owner), GAS_DAMAGE);
+            }
+
+            cloud.age++;
+        }
+    }
+
+    // TRUE IF NO BLOCK IS BETWEEN THE CENTER OF THE CLOUD AND THE ENTITY'S BODY OR EYES
+    private static boolean canReach(ServerLevel level, Vec3 center, LivingEntity entity) {
+        AABB box = entity.getBoundingBox();
+        if (box.contains(center)) {
+            return true;
+        }
+
+        return clip(level, center, box.getCenter()).getType() == HitResult.Type.MISS
+            || clip(level, center, entity.getEyePosition()).getType() == HitResult.Type.MISS;
+    }
+
+    private static BlockHitResult clip(ServerLevel level, Vec3 from, Vec3 to) {
+        return level.clip(new ClipContext(
+            from,
+            to,
+            ClipContext.Block.COLLIDER,
+            ClipContext.Fluid.NONE,
+            CollisionContext.empty()
+        ));
+    }
+
+    private static final class Cloud {
+        final ResourceKey<Level> dimension;
+        final UUID owner;
+        final Vec3 origin;
+        final Vec3 backward;
+        final double maxOffset;
+        int age;
+
+        Cloud(ResourceKey<Level> dimension, UUID owner, Vec3 origin, Vec3 backward, double maxOffset) {
+            this.dimension = dimension;
+            this.owner = owner;
+            this.origin = origin;
+            this.backward = backward;
+            this.maxOffset = maxOffset;
+        }
+    }
+}
