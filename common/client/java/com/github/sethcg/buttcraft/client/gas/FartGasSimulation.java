@@ -3,6 +3,8 @@ package com.github.sethcg.buttcraft.client.gas;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.jspecify.annotations.Nullable;
+
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
@@ -62,6 +64,11 @@ public final class FartGasSimulation {
     private static final float ENTRAINMENT = 0.16F;
     private static final float MAX_RADIUS = 1.9F;
 
+    // A FART'S PUFFS LIVE THIS LONG PLUS UP TO PUFF_LIFETIME_SPREAD MORE, SO IT FADES OUT UNEVENLY.
+    // THE SERVER'S POISON CLOUD LASTS ABOUT AS LONG AS THE MIDDLE OF THAT.
+    private static final int PUFF_LIFETIME = 150;
+    private static final int PUFF_LIFETIME_SPREAD = 90;
+
     // MERGING: ONLY PUFFS THIS OLD MERGE, SO THE TURBULENT JET KEEPS ITS SMALL PUFFS.
     private static final int MERGE_MIN_AGE = 12;
 
@@ -76,7 +83,19 @@ public final class FartGasSimulation {
         Vec3 backward = new Vec3(Math.sin(angle), 0.0, -Math.cos(angle));
         // JUST OUTSIDE THE BACK OF THE PLAYER'S HITBOX (HALF WIDTH 0.3), AT HIP HEIGHT.
         Vec3 origin = new Vec3(x, y + 0.7, z).add(backward.scale(0.36));
-        this.emitters.add(new Emitter(origin, backward));
+        this.emitters.add(new Emitter(origin, backward, PUFF_LIFETIME, PUFF_LIFETIME_SPREAD, 1.0F));
+    }
+
+    /**
+     * A FART THAT SPREADS OUT EVENLY IN EVERY DIRECTION FROM A POINT (E.G. A SPLASH POTION),
+     * LINGERING ABOUT AS LONG AS THE SERVER'S POISON CLOUD (lifetimeTicks). size SCALES HOW
+     * MUCH GAS THERE IS AND HOW FAR IT SPREADS (1 = A NORMAL FART).
+     */
+    public void emitBurst(double x, double y, double z, int lifetimeTicks, float size) {
+        // SHORT CLOUDS FADE OUT OVER LESS TIME, SO THEY DON'T OUTLAST THE POISON BY MUCH.
+        int lifetimeSpread = Math.max(1, Math.min(PUFF_LIFETIME_SPREAD, lifetimeTicks / 2));
+        int puffLifetime = Math.max(1, lifetimeTicks - lifetimeSpread / 3);
+        this.emitters.add(new Emitter(new Vec3(x, y, z), null, puffLifetime, lifetimeSpread, size));
     }
 
     public boolean isEmpty() {
@@ -159,7 +178,11 @@ public final class FartGasSimulation {
     private void tickEmitters(ClientLevel level) {
         for (int i = this.emitters.size() - 1; i >= 0; i--) {
             Emitter emitter = this.emitters.get(i);
-            int count = emitter.age < 4 ? 3 : 2;
+            // A BURST RELEASES MORE GAS AT ONCE, SINCE IT SPREADS OUT IN EVERY DIRECTION.
+            int count = emitter.direction == null
+                ? (emitter.age < 4 ? 4 : 3)
+                : (emitter.age < 4 ? 3 : 2);
+            count = Math.max(1, Math.round(count * emitter.size));
             for (int n = 0; n < count; n++) {
                 this.spawnPuff(level, emitter);
             }
@@ -182,13 +205,20 @@ public final class FartGasSimulation {
 
         // JET STRENGTH DECAYS OVER THE EMISSION.
         double strength = 1.0 - emitter.age / (double) EMIT_TICKS * 0.65;
-        double speed = Mth.lerp(this.random.nextDouble(), JET_SPEED_MIN, JET_SPEED_MAX) * strength;
+        double speed = Mth.lerp(this.random.nextDouble(), JET_SPEED_MIN, JET_SPEED_MAX) * strength * emitter.size;
 
-        Vec3 dir = emitter.direction
-            .add(this.random.nextGaussian() * JET_SPREAD * 0.5,
-                -0.12 + this.random.nextGaussian() * JET_SPREAD * 0.35,
-                this.random.nextGaussian() * JET_SPREAD * 0.5)
-            .normalize();
+        Vec3 dir;
+        if (emitter.direction == null) {
+            // BURST: A RANDOM, MOSTLY SIDEWAYS DIRECTION SO THE GAS RINGS OUT ACROSS THE GROUND.
+            double angle = this.random.nextDouble() * Math.PI * 2.0;
+            dir = new Vec3(Math.cos(angle), 0.1 + this.random.nextGaussian() * 0.25, Math.sin(angle)).normalize();
+        } else {
+            dir = emitter.direction
+                .add(this.random.nextGaussian() * JET_SPREAD * 0.5,
+                    -0.12 + this.random.nextGaussian() * JET_SPREAD * 0.35,
+                    this.random.nextGaussian() * JET_SPREAD * 0.5)
+                .normalize();
+        }
 
         Puff puff = new Puff();
         puff.x = emitter.origin.x + this.random.nextGaussian() * 0.03;
@@ -200,7 +230,7 @@ public final class FartGasSimulation {
         puff.radius = INITIAL_RADIUS * (0.8F + this.random.nextFloat() * 0.5F);
         puff.temperature = 1.0F;
         puff.mass = 0.85F + this.random.nextFloat() * 0.3F;
-        puff.lifetime = 150 + this.random.nextInt(90);
+        puff.lifetime = emitter.puffLifetime + this.random.nextInt(emitter.lifetimeSpread);
         puff.seed = this.random.nextFloat() * 64.0F;
         this.sampleEnvironment(level, puff, level.dimensionType().hasSkyLight());
         puff.skyLight = puff.targetSkyLight;
@@ -544,12 +574,19 @@ public final class FartGasSimulation {
 
     private static final class Emitter {
         final Vec3 origin;
-        final Vec3 direction;
+        // NULL FOR A BURST
+        final @Nullable Vec3 direction;
+        final int puffLifetime;
+        final int lifetimeSpread;
+        final float size;
         int age;
 
-        Emitter(Vec3 origin, Vec3 direction) {
+        Emitter(Vec3 origin, @Nullable Vec3 direction, int puffLifetime, int lifetimeSpread, float size) {
             this.origin = origin;
             this.direction = direction;
+            this.puffLifetime = puffLifetime;
+            this.lifetimeSpread = lifetimeSpread;
+            this.size = size;
         }
     }
 }

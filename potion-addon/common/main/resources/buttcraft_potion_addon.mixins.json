@@ -1,0 +1,14 @@
+{
+	"required": true,
+	"minVersion": "0.8",
+	"package": "com.github.sethcg.buttcraft.potion.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"mixins": [
+		"AbstractArrowMixin",
+		"ThrownLingeringPotionMixin",
+		"ThrownSplashPotionMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

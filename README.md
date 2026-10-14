@@ -43,4 +43,16 @@ Whether you're defending your base, clearing a cave, or just asserting dominance
 # RUN
 ./gradlew :26.3:runClient
 
+# RUN WITH THE POTION ADD-ON
+./gradlew :26.3:potion-addon:runClient
+
 ```
+
+## Potion Add-on
+
+`buttcraft-potion-addon` is an optional, separate jar that needs ButtCraft installed (on both the client and the server).
+
+- 🍾 **Bottled Fart** — Use a glass bottle on a fart cloud to scoop it up, like dragon's breath. Drink it for a long poison.
+- 💣 **Splash Fart** — Brew a Bottled Fart with gunpowder. It releases a fart cloud where it breaks.
+- 🌫️ **Lingering Fart** — Brew a Splash Fart with dragon's breath. Its fart cloud lingers for 18 seconds.
+- 🏹 **Arrow of Farts** — Craft a Lingering Fart with 8 arrows. Leaves a small fart cloud for 4 seconds where it hits.

@@ -59,4 +59,12 @@ public final class FartGas {
 
         SIMULATION.emit(x, y, z, yaw);
     }
+
+    public static void emitBurst(Minecraft client, double x, double y, double z, int lifetimeTicks, float size) {
+        if (client.level == null) {
+            return;
+        }
+
+        SIMULATION.emitBurst(x, y, z, lifetimeTicks, size);
+    }
 }

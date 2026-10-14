@@ -8,6 +8,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
@@ -22,6 +23,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * SERVER-SIDE POISON AREA FOR EACH FART.
@@ -45,9 +48,9 @@ public final class FartClouds {
     // THE FARTER IS IMMUNE TO THEIR OWN GAS FOR THIS LONG, SO THEY CAN WALK AWAY FROM IT
     private static final int OWNER_GRACE_TICKS = 40;
 
-    // HOW LONG THE CLOUD STAYS POISONOUS. THE GAS PUFFS LIVE 150-240 TICKS AND ARE
-    // MOSTLY FADED OUT FOR THE LAST PART OF THAT.
-    private static final int CLOUD_LIFETIME_TICKS = 180;
+    // HOW LONG A CLOUD STAYS POISONOUS BY DEFAULT. THE GAS PUFFS LIVE 150-240 TICKS AND
+    // ARE MOSTLY FADED OUT FOR THE LAST PART OF THAT.
+    public static final int CLOUD_LIFETIME_TICKS = 180;
 
     // SHAPE: KEEP ROUGHLY IN SYNC WITH THE CLIENT'S FartGasSimulation.
     private static final double ORIGIN_HEIGHT = 0.7;
@@ -57,6 +60,9 @@ public final class FartClouds {
     private static final double JET_DISTANCE = 1.4;
     private static final double JET_SPREAD = 0.7;
     private static final double JET_TICKS = 8.0;
+
+    // A BURST (E.G. A SPLASH POTION) DOESN'T DRIFT, IT SPREADS OUT EVENLY AS FAR AS THE JET GOES
+    private static final double BURST_SPREAD = JET_DISTANCE + JET_SPREAD;
 
     // KEEP THE CENTER THIS FAR OFF A WALL THE JET RUNS INTO
     private static final double WALL_MARGIN = 0.1;
@@ -97,7 +103,56 @@ public final class FartClouds {
             maxOffset = Math.max(0.0, wall.getLocation().distanceTo(origin) - WALL_MARGIN);
         }
 
-        CLOUDS.add(new Cloud(level.dimension(), owner.getUUID(), origin, backward, maxOffset));
+        CLOUDS.add(new Cloud(
+            level.dimension(),
+            owner.getUUID(),
+            OWNER_GRACE_TICKS,
+            CLOUD_LIFETIME_TICKS,
+            origin,
+            backward,
+            maxOffset,
+            JET_SPREAD
+        ));
+    }
+
+    /**
+     * SPAWNS A CLOUD THAT SPREADS OUT EVENLY AROUND A POINT INSTEAD OF BEHIND A PLAYER.
+     * THE OWNER (IF ANY) GETS THE CREDIT BUT ISN'T IMMUNE TO IT. size SCALES HOW FAR IT
+     * SPREADS (1 = A NORMAL FART).
+     */
+    public static void spawnBurst(
+        ServerLevel level,
+        Vec3 center,
+        @Nullable Entity owner,
+        int lifetimeTicks,
+        float size
+    ) {
+        CLOUDS.add(new Cloud(
+            level.dimension(),
+            owner == null ? null : owner.getUUID(),
+            0,
+            lifetimeTicks,
+            center,
+            Vec3.ZERO,
+            0.0,
+            BURST_SPREAD * size
+        ));
+    }
+
+    /** TRUE IF ANY POISONOUS CLOUD IN THE LEVEL TOUCHES THE BOX. */
+    public static boolean isTouching(ServerLevel level, AABB box) {
+        for (Cloud cloud : CLOUDS) {
+            if (cloud.dimension != level.dimension() || cloud.age >= cloud.lifetimeTicks) {
+                continue;
+            }
+
+            double radius = cloud.radius();
+            if (box.distanceToSqr(cloud.center()) <= radius * radius) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void tick(ServerLevel level) {
@@ -109,19 +164,15 @@ public final class FartClouds {
                 continue;
             }
 
-            if (cloud.age >= CLOUD_LIFETIME_TICKS) {
+            if (cloud.age >= cloud.lifetimeTicks) {
                 CLOUDS.remove(i);
                 continue;
             }
 
-            // THE JET CARRIES THE GAS BACKWARD AND FANS IT OUT, THEN IT SLOWLY DIFFUSES
-            double jet = 1.0 - Math.exp(-cloud.age / JET_TICKS);
-            double offset = Math.min(ORIGIN_BEHIND + JET_DISTANCE * jet, cloud.maxOffset);
-            Vec3 center = cloud.origin.add(cloud.backward.scale(offset));
-            double radius = Math.sqrt(INITIAL_RADIUS * INITIAL_RADIUS + DIFFUSION * cloud.age)
-                + JET_SPREAD * jet;
+            Vec3 center = cloud.center();
+            double radius = cloud.radius();
             double radiusSquared = radius * radius;
-            boolean ownerImmune = cloud.age < OWNER_GRACE_TICKS;
+            boolean ownerImmune = cloud.age < cloud.ownerGraceTicks;
 
             // FIND ALL LIVING ENTITIES (PLAYERS AND MOBS) TOUCHING THE SPHERE
             List<LivingEntity> entities = level.getEntitiesOfClass(
@@ -157,7 +208,9 @@ public final class FartClouds {
                 }
 
                 // CREDIT THE FARTER (IF THEY ARE STILL ONLINE)
-                ServerPlayer owner = level.getServer().getPlayerList().getPlayer(cloud.owner);
+                ServerPlayer owner = cloud.owner == null
+                    ? null
+                    : level.getServer().getPlayerList().getPlayer(cloud.owner);
 
                 NEXT_DOSES.put(entity.getUUID(), currentTick + DOSE_INTERVAL_TICKS);
                 entity.addEffect(poison, owner);
@@ -191,18 +244,50 @@ public final class FartClouds {
 
     private static final class Cloud {
         final ResourceKey<Level> dimension;
-        final UUID owner;
+        final @Nullable UUID owner;
+        final int ownerGraceTicks;
+        final int lifetimeTicks;
         final Vec3 origin;
         final Vec3 backward;
         final double maxOffset;
+        final double spread;
         int age;
 
-        Cloud(ResourceKey<Level> dimension, UUID owner, Vec3 origin, Vec3 backward, double maxOffset) {
+        Cloud(
+            ResourceKey<Level> dimension,
+            @Nullable UUID owner,
+            int ownerGraceTicks,
+            int lifetimeTicks,
+            Vec3 origin,
+            Vec3 backward,
+            double maxOffset,
+            double spread
+        ) {
             this.dimension = dimension;
             this.owner = owner;
+            this.ownerGraceTicks = ownerGraceTicks;
+            this.lifetimeTicks = lifetimeTicks;
             this.origin = origin;
             this.backward = backward;
             this.maxOffset = maxOffset;
+            this.spread = spread;
+        }
+
+        // HOW FAR THE JET HAS GONE, FROM 0 TO 1
+        double jet() {
+            return 1.0 - Math.exp(-this.age / JET_TICKS);
+        }
+
+        // THE JET CARRIES THE GAS BACKWARD (A BURST HAS NO DIRECTION, SO IT STAYS PUT)
+        Vec3 center() {
+            double offset = Math.min(ORIGIN_BEHIND + JET_DISTANCE * this.jet(), this.maxOffset);
+            return this.origin.add(this.backward.scale(offset));
+        }
+
+        // THE JET FANS THE GAS OUT, THEN IT SLOWLY DIFFUSES
+        double radius() {
+            return Math.sqrt(INITIAL_RADIUS * INITIAL_RADIUS + DIFFUSION * this.age)
+                + this.spread * this.jet();
         }
     }
 }

@@ -3,6 +3,7 @@ package com.github.sethcg.buttcraft.client;
 import com.github.sethcg.buttcraft.ButtCraft;
 import com.github.sethcg.buttcraft.ModSounds;
 import com.github.sethcg.buttcraft.client.gas.FartGas;
+import com.github.sethcg.buttcraft.networking.FartBurstPayload;
 import com.github.sethcg.buttcraft.networking.FartPayload;
 import com.github.sethcg.buttcraft.networking.FartRequestPayload;
 
@@ -62,6 +63,27 @@ public class ButtCraftClient implements ClientModInitializer {
                     client.execute(() -> {
                         playFart(client);
                         FartGas.emit(client, x, y, z, yaw);
+                    });
+                });
+
+        // RECEIVE FARTS THAT BURST OUT AROUND A POINT (E.G. A SPLASH POTION)
+        ClientPlayNetworking.registerGlobalReceiver(
+                FartBurstPayload.TYPE,
+                (payload, context) -> {
+                    Minecraft client = context.client();
+
+                    if (client.player == null)
+                        return;
+
+                    double x = payload.x();
+                    double y = payload.y();
+                    double z = payload.z();
+                    int lifetimeTicks = payload.lifetimeTicks();
+                    float size = payload.size();
+
+                    client.execute(() -> {
+                        playFart(client);
+                        FartGas.emitBurst(client, x, y, z, lifetimeTicks, size);
                     });
                 });
     }

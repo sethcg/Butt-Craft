@@ -1,0 +1,6 @@
+plugins {
+	// SAME LOOM AS THE PARENT (BASE MOD) PROJECT, SO NO VERSION HERE
+	id 'net.fabricmc.fabric-loom'
+}
+
+apply from: rootProject.file('gradle/potion-addon.gradle')

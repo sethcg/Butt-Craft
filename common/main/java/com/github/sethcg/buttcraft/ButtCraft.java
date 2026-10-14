@@ -1,5 +1,6 @@
 package com.github.sethcg.buttcraft;
 
+import com.github.sethcg.buttcraft.networking.FartBurstPayload;
 import com.github.sethcg.buttcraft.networking.FartPayload;
 import com.github.sethcg.buttcraft.networking.FartRequestPayload;
 
@@ -10,14 +11,17 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -121,6 +125,31 @@ public class ButtCraft implements ModInitializer {
         level.players().stream()
             .filter(other -> other.distanceToSqr(player) <= FART_SOUND_RADIUS_SQUARED)
             .forEach(other -> ServerPlayNetworking.send(other, fart));
+    }
+
+    /**
+     * RELEASES A FART THAT ISN'T COMING OUT OF A PLAYER (E.G. A SPLASH POTION BREAKING).
+     * THE GAS SPREADS OUT EVENLY AROUND THE POINT; THE OWNER (IF ANY) GETS THE CREDIT.
+     */
+    public static void fartBurst(ServerLevel level, Vec3 pos, @Nullable Entity owner) {
+        fartBurst(level, pos, owner, FartClouds.CLOUD_LIFETIME_TICKS, 1.0F);
+    }
+
+    /**
+     * SAME AS ABOVE, BUT THE GAS LINGERS FOR THE GIVEN NUMBER OF TICKS (20 TICKS = 1 SECOND)
+     * AND SPREADS OUT size TIMES AS FAR (1 = A NORMAL FART).
+     */
+    public static void fartBurst(ServerLevel level, Vec3 pos, @Nullable Entity owner, int lifetimeTicks, float size) {
+
+        // LEAVE A POISONOUS CLOUD WHERE THE GAS WILL BE
+        FartClouds.spawnBurst(level, pos, owner, lifetimeTicks, size);
+
+        // CREATE THE PAYLOAD THAT WILL BE SENT TO NEARBY CLIENTS
+        FartBurstPayload burst = new FartBurstPayload(pos.x, pos.y, pos.z, lifetimeTicks, size);
+
+        level.players().stream()
+            .filter(other -> other.distanceToSqr(pos) <= FART_SOUND_RADIUS_SQUARED)
+            .forEach(other -> ServerPlayNetworking.send(other, burst));
     }
 
     private static void affectNearbyEntities(ServerPlayer player, ServerLevel level) {

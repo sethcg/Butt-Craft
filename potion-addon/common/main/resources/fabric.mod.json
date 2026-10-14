@@ -1,0 +1,28 @@
+{
+	"schemaVersion": 1,
+	"id": "buttcraft_potion_addon",
+	"version": "${version}",
+	"name": "ButtCraft Potion Addon",
+	"description": "Bottle it. Throw it.",
+	"authors": [
+		"sethcg"
+	],
+	"license": "MIT",
+	"icon": "assets/buttcraft_potion_addon/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.github.sethcg.buttcraft.potion.ButtCraftPotionAddon"
+		]
+	},
+	"mixins": [
+		"buttcraft_potion_addon.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=${loader_version}",
+		"minecraft": ">=${minecraft_version}",
+		"java": ">=${java_version}",
+		"fabric-api": "*",
+		"buttcraft": "*"
+	}
+}

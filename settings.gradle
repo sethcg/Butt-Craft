@@ -12,5 +12,6 @@ pluginManagement {
 rootProject.name = 'buttcraft'
 
 include(
-    ':26.3'
+    ':26.3',
+    ':26.3:potion-addon'
 )

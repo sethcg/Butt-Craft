@@ -1,0 +1,71 @@
+// SHARED BUILD LOGIC FOR THE POTION ADD-ON, FOR EVERY MINECRAFT VERSION PROJECT.
+// APPLIED FROM <version>/potion-addon/build.gradle. THE ADD-ON IS A CHILD OF THE BASE
+// MOD'S <version> PROJECT, SO IT INHERITS THE MINECRAFT / FABRIC VERSIONS FROM IT.
+//
+// SOURCES COME FROM TWO PLACES:
+//   potion-addon/common/        EVERYTHING THAT COMPILES UNCHANGED ON EVERY SUPPORTED VERSION
+//   <version>/potion-addon/src  ONLY WHAT IS SPECIFIC TO THAT MINECRAFT VERSION
+
+def baseMod = project.parent
+
+version = "${project.potion_addon_version}+${project.minecraft_version}"
+
+sourceSets {
+	main {
+		java {
+			srcDir rootProject.file("potion-addon/common/main/java")
+		}
+
+		resources {
+			srcDir rootProject.file("potion-addon/common/main/resources")
+		}
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// THE BASE MOD. ONLY NEEDED TO COMPILE AND RUN IN DEV, IT IS NOT BUNDLED INTO THE JAR.
+	implementation project(baseMod.path)
+}
+
+processResources {
+	def version = project.version
+	def minecraftVersion = project.minecraft_version
+	def loaderVersion = project.loader_version
+	def javaVersion = project.java_version
+
+	inputs.property "version", version
+	inputs.property "minecraft_version", minecraftVersion
+	inputs.property "loader_version", loaderVersion
+	inputs.property "java_version", javaVersion
+
+	filesMatching("fabric.mod.json") {
+		expand(
+			"version": version,
+			"minecraft_version": minecraftVersion,
+			"loader_version": loaderVersion,
+			"java_version": javaVersion
+		)
+	}
+}
+
+def javaVersion = project.java_version as Integer
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = javaVersion
+}
+
+java {
+	withSourcesJar()
+
+	sourceCompatibility = JavaVersion.toVersion(javaVersion)
+	targetCompatibility = JavaVersion.toVersion(javaVersion)
+}
+
+base {
+	archivesName = "buttcraft-potion-addon"
+}
