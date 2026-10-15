@@ -6,6 +6,7 @@
 	"mixins": [
 		"AbstractArrowMixin",
 		"ArrowMixin",
+		"ItemStackMixin",
 		"ThrownLingeringPotionMixin",
 		"ThrownSplashPotionMixin"
 	],

@@ -1,5 +1,6 @@
 package com.github.sethcg.buttcraft.potion;
 
+import com.github.sethcg.buttcraft.FartClouds;
 import com.github.sethcg.buttcraft.ModEffects;
 
 import net.minecraft.core.Holder;
@@ -69,6 +70,22 @@ public final class FartPotions {
 
     public static boolean isFart(ItemStack stack) {
         return stack.getOrDefault(DataComponents.POTION_CONTENTS, PotionContents.EMPTY).is(FART);
+    }
+
+    // THE STENCH A THROWN OR SHOT FART REALLY GIVES, SO ITS TOOLTIP MATCHES. NULL FOR A
+    // DRINKABLE FART (OR ANYTHING ELSE), WHICH GIVES THE POTION'S OWN STENCH II.
+    public static MobEffectInstance thrownStench(ItemStack stack) {
+        if (stack.is(Items.SPLASH_POTION)) {
+            return new MobEffectInstance(ModEffects.STENCH, FartClouds.STENCH_DURATION_TICKS, 0);
+        }
+        if (stack.is(Items.LINGERING_POTION)) {
+            return new MobEffectInstance(ModEffects.STENCH, LINGERING_STENCH_TICKS, 0);
+        }
+        if (stack.is(Items.TIPPED_ARROW)) {
+            return new MobEffectInstance(ModEffects.STENCH, ARROW_STENCH_TICKS, 0);
+        }
+
+        return null;
     }
 
     // WHERE A THROWN FART RELEASES ITS GAS, KEPT OUT OF THE BLOCK IT HIT
