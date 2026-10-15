@@ -33,10 +33,11 @@ public abstract class ThrownLingeringPotionMixin {
             FartPotions.impactPosition(hit),
             potion.getOwner(),
             FartPotions.LINGERING_CLOUD_TICKS,
-            1.0F
+            1.0F,
+            FartPotions.LINGERING_STENCH_TICKS
         );
 
-        // SKIP THE VANILLA POTION CLOUD, THE FART CLOUD DOES THE POISONING
+        // SKIP THE VANILLA POTION CLOUD, THE FART CLOUD GIVES THE STENCH
         ci.cancel();
     }
 }

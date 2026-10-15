@@ -14,12 +14,13 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * A SPLASH FART RELEASES A FART CLOUD WHERE IT BREAKS.
+ * A SPLASH FART RELEASES A FART CLOUD WHERE IT BREAKS, INSTEAD OF SPLASHING THE BOTTLE'S
+ * STENCH II ON EVERYONE NEARBY.
  */
 @Mixin(ThrownSplashPotion.class)
 public abstract class ThrownSplashPotionMixin {
 
-    @Inject(method = "onHitAsPotion", at = @At("TAIL"))
+    @Inject(method = "onHitAsPotion", at = @At("HEAD"), cancellable = true)
     private void buttcraftPotionAddon$fartOnImpact(ServerLevel level, ItemStack stack, HitResult hit, CallbackInfo ci) {
         if (!FartPotions.isFart(stack)) {
             return;
@@ -28,5 +29,8 @@ public abstract class ThrownSplashPotionMixin {
         // CREDIT WHOEVER THREW IT
         ThrownSplashPotion potion = (ThrownSplashPotion) (Object) this;
         ButtCraft.fartBurst(level, FartPotions.impactPosition(hit), potion.getOwner());
+
+        // SKIP THE VANILLA SPLASH, THE FART CLOUD GIVES THE STENCH
+        ci.cancel();
     }
 }

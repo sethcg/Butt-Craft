@@ -57,6 +57,9 @@ public class ButtCraft implements ModInitializer {
         // REGISTER CUSTOM SOUND
         ModSounds.initialize();
 
+        // REGISTER CUSTOM STATUS EFFECTS
+        ModEffects.initialize();
+
         // REGISTER PACKET PAYLOADS
         Networking.registerPayloads();
 
@@ -132,17 +135,24 @@ public class ButtCraft implements ModInitializer {
      * THE GAS SPREADS OUT EVENLY AROUND THE POINT; THE OWNER (IF ANY) GETS THE CREDIT.
      */
     public static void fartBurst(ServerLevel level, Vec3 pos, @Nullable Entity owner) {
-        fartBurst(level, pos, owner, FartClouds.CLOUD_LIFETIME_TICKS, 1.0F);
+        fartBurst(level, pos, owner, FartClouds.CLOUD_LIFETIME_TICKS, 1.0F, FartClouds.STENCH_DURATION_TICKS);
     }
 
     /**
-     * SAME AS ABOVE, BUT THE GAS LINGERS FOR THE GIVEN NUMBER OF TICKS (20 TICKS = 1 SECOND)
-     * AND SPREADS OUT size TIMES AS FAR (1 = A NORMAL FART).
+     * SAME AS ABOVE, BUT THE GAS LINGERS FOR THE GIVEN NUMBER OF TICKS (20 TICKS = 1 SECOND),
+     * SPREADS OUT size TIMES AS FAR (1 = A NORMAL FART) AND EACH DOSE GIVES stenchTicks OF STENCH I.
      */
-    public static void fartBurst(ServerLevel level, Vec3 pos, @Nullable Entity owner, int lifetimeTicks, float size) {
+    public static void fartBurst(
+        ServerLevel level,
+        Vec3 pos,
+        @Nullable Entity owner,
+        int lifetimeTicks,
+        float size,
+        int stenchTicks
+    ) {
 
-        // LEAVE A POISONOUS CLOUD WHERE THE GAS WILL BE
-        FartClouds.spawnBurst(level, pos, owner, lifetimeTicks, size);
+        // LEAVE A STINKY CLOUD WHERE THE GAS WILL BE
+        FartClouds.spawnBurst(level, pos, owner, lifetimeTicks, size, stenchTicks);
 
         // CREATE THE PAYLOAD THAT WILL BE SENT TO NEARBY CLIENTS
         FartBurstPayload burst = new FartBurstPayload(pos.x, pos.y, pos.z, lifetimeTicks, size);

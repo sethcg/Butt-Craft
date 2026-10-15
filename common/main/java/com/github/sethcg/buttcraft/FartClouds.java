@@ -7,7 +7,6 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.effect.MobEffectInstance;
-import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.ClipContext;
@@ -27,7 +26,7 @@ import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 
 /**
- * SERVER-SIDE POISON AREA FOR EACH FART.
+ * SERVER-SIDE STENCH AREA FOR EACH FART.
  *
  * <p>THE VISIBLE GAS IS SIMULATED PER CLIENT, SO THE SERVER CAN'T SEE IT. INSTEAD EACH
  * FART GETS ONE SPHERE THAT ROUGHLY FOLLOWS THE CLOUD: IT STARTS SMALL BEHIND THE PLAYER,
@@ -35,12 +34,13 @@ import org.jspecify.annotations.Nullable;
  */
 public final class FartClouds {
 
-    // ONE DOSE = A SHORT POISON EFFECT PLUS ONE HIT OF GAS DAMAGE (20 TICKS = 1 SECOND).
-    // POISON I ONLY HURTS EVERY 25 TICKS, SO THE 1 SECOND EFFECT IS JUST THE GREEN HEARTS;
-    // THE DAMAGE COMES FROM THE GAS ITSELF SO THE FARTER GETS THE CREDIT AND IT CAN KILL.
+    // ONE DOSE = STENCH I PLUS ONE HIT OF GAS DAMAGE (20 TICKS = 1 SECOND). THE GAS DAMAGE
+    // IS CREDITED TO THE FARTER AND CAN KILL; THE STENCH KEEPS HURTING AFTER LEAVING THE CLOUD.
     private static final int DOSE_INTERVAL_TICKS = 20;
-    private static final int POISON_DURATION_TICKS = 20;
-    private static final int POISON_AMPLIFIER = 0;
+    private static final int STENCH_AMPLIFIER = 0;
+
+    // HOW LONG EACH DOSE OF STENCH LASTS BY DEFAULT
+    public static final int STENCH_DURATION_TICKS = 180;
 
     // GAS DAMAGE PER DOSE (2.0 = 1 HEART)
     private static final float GAS_DAMAGE = 1.0F;
@@ -108,6 +108,7 @@ public final class FartClouds {
             owner.getUUID(),
             OWNER_GRACE_TICKS,
             CLOUD_LIFETIME_TICKS,
+            STENCH_DURATION_TICKS,
             origin,
             backward,
             maxOffset,
@@ -118,20 +119,22 @@ public final class FartClouds {
     /**
      * SPAWNS A CLOUD THAT SPREADS OUT EVENLY AROUND A POINT INSTEAD OF BEHIND A PLAYER.
      * THE OWNER (IF ANY) GETS THE CREDIT BUT ISN'T IMMUNE TO IT. size SCALES HOW FAR IT
-     * SPREADS (1 = A NORMAL FART).
+     * SPREADS (1 = A NORMAL FART), stenchTicks IS HOW LONG EACH DOSE OF STENCH LASTS.
      */
     public static void spawnBurst(
         ServerLevel level,
         Vec3 center,
         @Nullable Entity owner,
         int lifetimeTicks,
-        float size
+        float size,
+        int stenchTicks
     ) {
         CLOUDS.add(new Cloud(
             level.dimension(),
             owner == null ? null : owner.getUUID(),
             0,
             lifetimeTicks,
+            stenchTicks,
             center,
             Vec3.ZERO,
             0.0,
@@ -192,13 +195,13 @@ public final class FartClouds {
                     continue;
                 }
 
-                // POISON-IMMUNE MOBS (UNDEAD, SPIDERS) DON'T MIND THE GAS
-                MobEffectInstance poison = new MobEffectInstance(
-                    MobEffects.POISON,
-                    POISON_DURATION_TICKS,
-                    POISON_AMPLIFIER
+                // POISON-IMMUNE MOBS (UNDEAD) DON'T MIND THE GAS
+                MobEffectInstance stench = new MobEffectInstance(
+                    ModEffects.STENCH,
+                    cloud.stenchTicks,
+                    STENCH_AMPLIFIER
                 );
-                if (!entity.canBeAffected(poison)) {
+                if (!ModEffects.canSmell(entity) || !entity.canBeAffected(stench)) {
                     continue;
                 }
 
@@ -213,7 +216,7 @@ public final class FartClouds {
                     : level.getServer().getPlayerList().getPlayer(cloud.owner);
 
                 NEXT_DOSES.put(entity.getUUID(), currentTick + DOSE_INTERVAL_TICKS);
-                entity.addEffect(poison, owner);
+                entity.addEffect(stench, owner);
                 entity.hurtServer(level, FartGasDamageSource.create(level, owner), GAS_DAMAGE);
             }
 
@@ -247,6 +250,7 @@ public final class FartClouds {
         final @Nullable UUID owner;
         final int ownerGraceTicks;
         final int lifetimeTicks;
+        final int stenchTicks;
         final Vec3 origin;
         final Vec3 backward;
         final double maxOffset;
@@ -258,6 +262,7 @@ public final class FartClouds {
             @Nullable UUID owner,
             int ownerGraceTicks,
             int lifetimeTicks,
+            int stenchTicks,
             Vec3 origin,
             Vec3 backward,
             double maxOffset,
@@ -267,6 +272,7 @@ public final class FartClouds {
             this.owner = owner;
             this.ownerGraceTicks = ownerGraceTicks;
             this.lifetimeTicks = lifetimeTicks;
+            this.stenchTicks = stenchTicks;
             this.origin = origin;
             this.backward = backward;
             this.maxOffset = maxOffset;

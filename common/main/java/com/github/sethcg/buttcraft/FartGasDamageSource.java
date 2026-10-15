@@ -27,9 +27,9 @@ public final class FartGasDamageSource extends DamageSource {
 
     // DEATH MESSAGES: death.attack.buttcraft.fart_gas[.self|.player].<NUMBER>
     private static final String MESSAGE_KEY = "death.attack." + ButtCraft.MOD_ID + ".fart_gas";
-    private static final int UNKNOWN_MESSAGES = 2;
-    private static final int SELF_MESSAGES = 5;
-    private static final int PLAYER_MESSAGES = 6;
+    private static final int UNKNOWN_MESSAGES = 5;
+    private static final int SELF_MESSAGES = 9;
+    private static final int PLAYER_MESSAGES = 15;
 
     private FartGasDamageSource(Holder<DamageType> type, @Nullable Entity farter) {
         super(type, null, farter);

@@ -12,7 +12,7 @@ public enum FartGasQuality {
     HIGH(new FartGasSettings.Values(2, 64, 4, FartGasSimulation.MAX_PUFFS)),
     CUSTOM(null);
 
-    public static final FartGasQuality DEFAULT = MEDIUM;
+    public static final FartGasQuality DEFAULT = LOW;
 
     /** NULL FOR {@link #CUSTOM}. */
     public final FartGasSettings.Values values;

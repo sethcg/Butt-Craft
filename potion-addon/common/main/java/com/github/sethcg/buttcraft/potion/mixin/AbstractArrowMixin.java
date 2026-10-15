@@ -57,7 +57,8 @@ public abstract class AbstractArrowMixin {
             FartPotions.impactPosition(hit),
             arrow.getOwner(),
             FartPotions.ARROW_CLOUD_TICKS,
-            FartPotions.ARROW_CLOUD_SIZE
+            FartPotions.ARROW_CLOUD_SIZE,
+            FartPotions.ARROW_STENCH_TICKS
         );
     }
 }

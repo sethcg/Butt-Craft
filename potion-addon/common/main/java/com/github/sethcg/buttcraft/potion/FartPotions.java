@@ -1,5 +1,7 @@
 package com.github.sethcg.buttcraft.potion;
 
+import com.github.sethcg.buttcraft.ModEffects;
+
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
 import net.minecraft.core.component.DataComponents;
@@ -7,7 +9,6 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.effect.MobEffectInstance;
-import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.alchemy.Potion;
@@ -25,16 +26,21 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class FartPotions {
 
-    // DRINKING IT GIVES A LONG POISON (20 TICKS = 1 SECOND)
-    private static final int POISON_DURATION_TICKS = 1800;
-    private static final int POISON_AMPLIFIER = 0;
+    // DRINKING IT GIVES 30 SECONDS OF STENCH II, LIKE POISON II (20 TICKS = 1 SECOND).
+    // THROWN AND SHOT FARTS DON'T USE THIS, THEY GIVE THE STENCH I BELOW INSTEAD.
+    private static final int STENCH_DURATION_TICKS = 600;
+    private static final int STENCH_AMPLIFIER = 1;
 
-    // A LINGERING FART'S CLOUD LASTS THIS LONG, INSTEAD OF THE USUAL 30 SECOND POTION CLOUD
+    // A LINGERING FART'S CLOUD LASTS THIS LONG, INSTEAD OF THE USUAL 30 SECOND POTION CLOUD,
+    // AND GIVES A LONGER STENCH I THAN A NORMAL FART
     public static final int LINGERING_CLOUD_TICKS = 360;
+    public static final int LINGERING_STENCH_TICKS = 360;
 
-    // AN ARROW OF FARTS LEAVES A SMALL, SHORT CLOUD WHERE IT HITS (1 = A NORMAL FART'S SIZE)
+    // AN ARROW OF FARTS GIVES STENCH I TO WHATEVER IT HITS AND LEAVES A SMALL, SHORT CLOUD
+    // (1 = A NORMAL FART'S SIZE)
     public static final int ARROW_CLOUD_TICKS = 80;
     public static final float ARROW_CLOUD_SIZE = 0.5F;
+    public static final int ARROW_STENCH_TICKS = 80;
 
     // A THROWN FART BREAKS THIS FAR OFF THE BLOCK IT HIT
     private static final double SURFACE_OFFSET = 0.3;
@@ -47,7 +53,7 @@ public final class FartPotions {
     public static final Holder<Potion> FART = Registry.registerForHolder(
         BuiltInRegistries.POTION,
         FART_KEY,
-        new Potion("fart", new MobEffectInstance(MobEffects.POISON, POISON_DURATION_TICKS, POISON_AMPLIFIER))
+        new Potion("fart", new MobEffectInstance(ModEffects.STENCH, STENCH_DURATION_TICKS, STENCH_AMPLIFIER))
     );
 
     private FartPotions() {
