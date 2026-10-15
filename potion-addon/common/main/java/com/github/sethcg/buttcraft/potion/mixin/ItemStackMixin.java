@@ -22,7 +22,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * SPLASH, LINGERING AND ARROW FARTS SHOW THE STENCH I THEY REALLY GIVE, INSTEAD OF THE
+ * SPLASH AND LINGERING FARTS SHOW THE STENCH I THEY REALLY GIVE, INSTEAD OF THE
  * BOTTLE'S STENCH II.
  *
  * <p>THE POTION'S OWN TOOLTIP ONLY SEES THE COMPONENTS, NOT THE ITEM, SO THIS HOOKS IN
@@ -55,7 +55,7 @@ public abstract class ItemStackMixin {
             return;
         }
 
-        // THE DURATION IS ALREADY THE REAL ONE, SO NO LINGERING/ARROW DURATION SCALE
+        // THE DURATION IS ALREADY THE REAL ONE, SO NO LINGERING DURATION SCALE
         if (display.shows(type)) {
             PotionContents.addPotionTooltip(List.of(stench), lines, 1.0F, context.tickRate());
         }

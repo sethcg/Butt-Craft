@@ -21,13 +21,11 @@ Whether you're defending your base, clearing a cave, or just asserting dominance
 
 ## Potion Add-on
 
-`buttcraft-potion-addon` is an optional extension mod adding fart potions.
+`buttcraft-potion-addon` is an optional extension mod that adds fart potions.
 
 - 🍾 **Bottled Fart** — Use an empty glass bottle on a fart cloud to scoop it up.
 - 💣 **Splash Fart** — Brew a Bottled Fart with gunpowder, releasing a fart cloud where it breaks.
 - ☁️ **Lingering Fart** — Brew a Splash Fart with dragon's breath, the fart cloud lingers for 18 seconds.
-- 🏹 **Arrow of Farts** — Craft a Lingering Fart with 8 arrows, leaving a small fart cloud for 4 seconds where it hits.
-
 ## Version Support
 
 - 🧵 **Mod Loader:** Fabric
