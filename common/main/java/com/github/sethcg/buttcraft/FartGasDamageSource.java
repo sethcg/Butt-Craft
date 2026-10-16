@@ -36,11 +36,19 @@ public final class FartGasDamageSource extends DamageSource {
     }
 
     public static FartGasDamageSource create(ServerLevel level, @Nullable Entity farter) {
-        Holder<DamageType> type = level.registryAccess()
+        return create(type(level), farter);
+    }
+
+    /** FOR DEALING MANY HITS AT ONCE: LOOK THE TYPE UP ONCE WITH {@link #type}. */
+    public static FartGasDamageSource create(Holder<DamageType> type, @Nullable Entity farter) {
+        return new FartGasDamageSource(type, farter);
+    }
+
+    // NOT CACHED STATICALLY: DAMAGE TYPES ARE PER-WORLD REGISTRY ENTRIES.
+    public static Holder<DamageType> type(ServerLevel level) {
+        return level.registryAccess()
             .lookupOrThrow(Registries.DAMAGE_TYPE)
             .getOrThrow(TYPE);
-
-        return new FartGasDamageSource(type, farter);
     }
 
     @Override

@@ -8,23 +8,23 @@ import net.minecraft.client.KeyMapping;
 
 public final class KeyBindings {
 
-    public static KeyMapping FART_KEY;
+    private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(
+            ButtCraft.id("buttcraft")
+    );
+
+    public static final KeyMapping FART_KEY = KeyMappingHelper.registerKeyMapping(
+            new KeyMapping(
+                    "key.buttcraft.fart",
+                    InputConstants.Type.KEYBOARD,
+                    InputConstants.KEY_R,
+                    CATEGORY
+            )
+    );
 
     private KeyBindings() {
     }
 
+    /** LOADS THIS CLASS, WHICH REGISTERS THE KEY MAPPINGS. */
     public static void initialize() {
-        KeyMapping.Category category = KeyMapping.Category.register(
-                ButtCraft.id("buttcraft")
-        );
-
-        FART_KEY = KeyMappingHelper.registerKeyMapping(
-                new KeyMapping(
-                        "key.buttcraft.fart",
-                        InputConstants.Type.KEYBOARD,
-                        InputConstants.KEY_R,
-                        category
-                )
-        );
     }
 }

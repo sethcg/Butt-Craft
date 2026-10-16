@@ -5,6 +5,7 @@ import com.github.sethcg.buttcraft.networking.FartPayload;
 import com.github.sethcg.buttcraft.networking.FartRequestPayload;
 
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.networking.v1.PlayerLookup;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 
@@ -38,7 +39,6 @@ public class ButtCraft implements ModInitializer {
 
     // FART VISIBILITY / SOUND
     private static final double FART_SOUND_RADIUS = 32.0;
-    private static final double FART_SOUND_RADIUS_SQUARED = FART_SOUND_RADIUS * FART_SOUND_RADIUS;
 
     // FART AREA OF EFFECT
     private static final double FART_EFFECT_RADIUS = 4.0;
@@ -110,37 +110,26 @@ public class ButtCraft implements ModInitializer {
     private static void fart(ServerPlayer player) {
         ServerLevel level = player.level();
 
-        // GET THE PLAYER'S REAL SERVER-SIDE POSITION
-        double x = player.getX();
-        double y = player.getY();
-        double z = player.getZ();
-        float yaw = player.getYRot();
-
         // DAMAGE AND KNOCK BACK ENTITIES AROUND THE PLAYER
         affectNearbyEntities(player, level);
 
         // LEAVE A POISONOUS CLOUD WHERE THE GAS WILL BE
         FartClouds.spawn(level, player);
 
-        // CREATE THE PAYLOAD THAT WILL BE SENT TO NEARBY CLIENTS
-        FartPayload fart = new FartPayload(x, y, z, yaw);
+        // SEND THE PLAYER'S REAL SERVER-SIDE POSITION TO NEARBY CLIENTS
+        Vec3 pos = player.position();
+        FartPayload fart = new FartPayload(pos, player.getYRot());
 
-        level.players().stream()
-            .filter(other -> other.distanceToSqr(player) <= FART_SOUND_RADIUS_SQUARED)
-            .forEach(other -> ServerPlayNetworking.send(other, fart));
+        for (ServerPlayer other : PlayerLookup.around(level, pos, FART_SOUND_RADIUS)) {
+            ServerPlayNetworking.send(other, fart);
+        }
     }
 
     /**
      * RELEASES A FART THAT ISN'T COMING OUT OF A PLAYER (E.G. A SPLASH POTION BREAKING).
-     * THE GAS SPREADS OUT EVENLY AROUND THE POINT; THE OWNER (IF ANY) GETS THE CREDIT.
-     */
-    public static void fartBurst(ServerLevel level, Vec3 pos, @Nullable Entity owner) {
-        fartBurst(level, pos, owner, FartClouds.CLOUD_LIFETIME_TICKS, 1.0F, FartClouds.STENCH_DURATION_TICKS);
-    }
-
-    /**
-     * SAME AS ABOVE, BUT THE GAS LINGERS FOR THE GIVEN NUMBER OF TICKS (20 TICKS = 1 SECOND),
-     * SPREADS OUT size TIMES AS FAR (1 = A NORMAL FART) AND EACH DOSE GIVES stenchTicks OF STENCH I.
+     * THE GAS SPREADS OUT EVENLY AROUND THE POINT AND LINGERS FOR lifetimeTicks (20 TICKS =
+     * 1 SECOND), SPREADS OUT size TIMES AS FAR (1 = A NORMAL FART) AND EACH DOSE GIVES
+     * stenchTicks OF STENCH I. THE OWNER (IF ANY) GETS THE CREDIT.
      */
     public static void fartBurst(
         ServerLevel level,
@@ -155,11 +144,11 @@ public class ButtCraft implements ModInitializer {
         FartClouds.spawnBurst(level, pos, owner, lifetimeTicks, size, stenchTicks);
 
         // CREATE THE PAYLOAD THAT WILL BE SENT TO NEARBY CLIENTS
-        FartBurstPayload burst = new FartBurstPayload(pos.x, pos.y, pos.z, lifetimeTicks, size);
+        FartBurstPayload burst = new FartBurstPayload(pos, lifetimeTicks, size);
 
-        level.players().stream()
-            .filter(other -> other.distanceToSqr(pos) <= FART_SOUND_RADIUS_SQUARED)
-            .forEach(other -> ServerPlayNetworking.send(other, burst));
+        for (ServerPlayer other : PlayerLookup.around(level, pos, FART_SOUND_RADIUS)) {
+            ServerPlayNetworking.send(other, burst);
+        }
     }
 
     private static void affectNearbyEntities(ServerPlayer player, ServerLevel level) {

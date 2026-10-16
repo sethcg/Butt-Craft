@@ -69,6 +69,10 @@ public final class FartGasSimulation {
     private static final int PUFF_LIFETIME = 150;
     private static final int PUFF_LIFETIME_SPREAD = 90;
 
+    // LIGHTING: EACH TICK A PUFF'S LIGHT MOVES THIS FAR TOWARD THE LIGHT WHERE IT IS NOW,
+    // SO DRIFTING INTO SHADE OR TORCHLIGHT FADES RATHER THAN SNAPS.
+    private static final float LIGHT_RESPONSE = 0.25F;
+
     // MERGING: ONLY PUFFS THIS OLD MERGE, SO THE TURBULENT JET KEEPS ITS SMALL PUFFS.
     private static final int MERGE_MIN_AGE = 12;
 
@@ -78,11 +82,11 @@ public final class FartGasSimulation {
     private final BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
     private long ticks;
 
-    public void emit(double x, double y, double z, float yaw) {
+    public void emit(Vec3 pos, float yaw) {
         double angle = Math.toRadians(yaw);
         Vec3 backward = new Vec3(Math.sin(angle), 0.0, -Math.cos(angle));
         // JUST OUTSIDE THE BACK OF THE PLAYER'S HITBOX (HALF WIDTH 0.3), AT HIP HEIGHT.
-        Vec3 origin = new Vec3(x, y + 0.7, z).add(backward.scale(0.36));
+        Vec3 origin = pos.add(backward.x * 0.36, 0.7, backward.z * 0.36);
         this.emitters.add(new Emitter(origin, backward, PUFF_LIFETIME, PUFF_LIFETIME_SPREAD, 1.0F));
     }
 
@@ -91,15 +95,11 @@ public final class FartGasSimulation {
      * LINGERING ABOUT AS LONG AS THE SERVER'S POISON CLOUD (lifetimeTicks). size SCALES HOW
      * MUCH GAS THERE IS AND HOW FAR IT SPREADS (1 = A NORMAL FART).
      */
-    public void emitBurst(double x, double y, double z, int lifetimeTicks, float size) {
+    public void emitBurst(Vec3 pos, int lifetimeTicks, float size) {
         // SHORT CLOUDS FADE OUT OVER LESS TIME, SO THEY DON'T OUTLAST THE POISON BY MUCH.
         int lifetimeSpread = Math.max(1, Math.min(PUFF_LIFETIME_SPREAD, lifetimeTicks / 2));
         int puffLifetime = Math.max(1, lifetimeTicks - lifetimeSpread / 3);
-        this.emitters.add(new Emitter(new Vec3(x, y, z), null, puffLifetime, lifetimeSpread, size));
-    }
-
-    public boolean isEmpty() {
-        return this.puffs.isEmpty() && this.emitters.isEmpty();
+        this.emitters.add(new Emitter(pos, null, puffLifetime, lifetimeSpread, size));
     }
 
     public List<Puff> puffs() {
@@ -125,6 +125,8 @@ public final class FartGasSimulation {
         double breezeAngle = this.ticks * 0.0007 + Math.sin(this.ticks * 0.00023) * 2.0;
         double breezeX = Math.cos(breezeAngle) * BREEZE;
         double breezeZ = Math.sin(breezeAngle) * BREEZE;
+        // TURBULENCE PHASE, SHARED BY EVERY PUFF THIS TICK.
+        double t = this.ticks * 0.045;
 
         for (int i = this.puffs.size() - 1; i >= 0; i--) {
             Puff puff = this.puffs.get(i);
@@ -148,7 +150,6 @@ public final class FartGasSimulation {
             puff.vy += BUOYANCY * puff.temperature - SETTLING;
 
             // TURBULENCE: SMOOTH, DIVERGENCE-FREE-ISH SWIRL FROM LAYERED SINES.
-            double t = this.ticks * 0.045;
             double px = puff.x * 0.9 + puff.seed;
             double py = puff.y * 0.9;
             double pz = puff.z * 0.9 - puff.seed;
@@ -171,11 +172,17 @@ public final class FartGasSimulation {
 
             // DISSIPATION: GAS SLOWLY MIXES BELOW VISIBILITY.
             puff.mass *= 0.997F;
-            this.sampleEnvironment(level, puff, hasSkyLight);
+            this.sampleEnvironment(level, puff, hasSkyLight, LIGHT_RESPONSE);
         }
     }
 
     private void tickEmitters(ClientLevel level) {
+        if (this.emitters.isEmpty()) {
+            return;
+        }
+
+        // A LOWERED BUDGET (SETTING CHANGED MID-CLOUD) IS REACHED BY MERGING AS PUFFS SPAWN.
+        int budget = Mth.clamp(FartGasSettings.current().puffBudget(), 1, MAX_PUFFS);
         for (int i = this.emitters.size() - 1; i >= 0; i--) {
             Emitter emitter = this.emitters.get(i);
             // A BURST RELEASES MORE GAS AT ONCE, SINCE IT SPREADS OUT IN EVERY DIRECTION.
@@ -184,7 +191,7 @@ public final class FartGasSimulation {
                 : (emitter.age < 4 ? 3 : 2);
             count = Math.max(1, Math.round(count * emitter.size));
             for (int n = 0; n < count; n++) {
-                this.spawnPuff(level, emitter);
+                this.spawnPuff(level, emitter, budget);
             }
 
             emitter.age++;
@@ -194,9 +201,7 @@ public final class FartGasSimulation {
         }
     }
 
-    private void spawnPuff(ClientLevel level, Emitter emitter) {
-        // A LOWERED BUDGET (SETTING CHANGED MID-CLOUD) IS REACHED BY MERGING HERE TOO.
-        int budget = Mth.clamp(FartGasSettings.current().puffBudget(), 1, MAX_PUFFS);
+    private void spawnPuff(ClientLevel level, Emitter emitter, int budget) {
         while (this.puffs.size() >= budget) {
             if (!this.mergeClosestPair()) {
                 this.puffs.remove(0);
@@ -232,9 +237,8 @@ public final class FartGasSimulation {
         puff.mass = 0.85F + this.random.nextFloat() * 0.3F;
         puff.lifetime = emitter.puffLifetime + this.random.nextInt(emitter.lifetimeSpread);
         puff.seed = this.random.nextFloat() * 64.0F;
-        this.sampleEnvironment(level, puff, level.dimensionType().hasSkyLight());
-        puff.skyLight = puff.targetSkyLight;
-        puff.blockLight = puff.targetBlockLight;
+        // A NEW PUFF STARTS AT ITS SURROUNDINGS' LIGHT RATHER THAN EASING IN FROM DARKNESS.
+        this.sampleEnvironment(level, puff, level.dimensionType().hasSkyLight(), 1.0F);
         puff.storePrevious();
         this.puffs.add(puff);
     }
@@ -320,18 +324,27 @@ public final class FartGasSimulation {
     }
 
     private void applyEntityStirring(ClientLevel level) {
-        AABB bounds = null;
-        for (Puff puff : this.puffs) {
-            AABB box = new AABB(puff.x - puff.radius, puff.y - puff.radius, puff.z - puff.radius,
-                puff.x + puff.radius, puff.y + puff.radius, puff.z + puff.radius);
-            bounds = bounds == null ? box : bounds.minmax(box);
-        }
-
-        if (bounds == null) {
+        if (this.puffs.isEmpty()) {
             return;
         }
 
-        List<LivingEntity> entities = level.getEntitiesOfClass(LivingEntity.class, bounds.inflate(1.0), Entity::isAlive);
+        double minX = Double.POSITIVE_INFINITY;
+        double minY = Double.POSITIVE_INFINITY;
+        double minZ = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY;
+        double maxY = Double.NEGATIVE_INFINITY;
+        double maxZ = Double.NEGATIVE_INFINITY;
+        for (Puff puff : this.puffs) {
+            minX = Math.min(minX, puff.x - puff.radius);
+            minY = Math.min(minY, puff.y - puff.radius);
+            minZ = Math.min(minZ, puff.z - puff.radius);
+            maxX = Math.max(maxX, puff.x + puff.radius);
+            maxY = Math.max(maxY, puff.y + puff.radius);
+            maxZ = Math.max(maxZ, puff.z + puff.radius);
+        }
+
+        AABB bounds = new AABB(minX, minY, minZ, maxX, maxY, maxZ).inflate(1.0);
+        List<LivingEntity> entities = level.getEntitiesOfClass(LivingEntity.class, bounds, Entity::isAlive);
         for (LivingEntity entity : entities) {
             double evx = entity.getX() - entity.xo;
             double evy = entity.getY() - entity.yo;
@@ -426,6 +439,11 @@ public final class FartGasSimulation {
             return false;
         }
 
+        // MOST SOLID BLOCKS ARE FULL CUBES, WHICH CONTAIN ANY POINT IN THEIR CELL.
+        if (state.isCollisionShapeFullBlock(level, this.mutablePos)) {
+            return true;
+        }
+
         VoxelShape shape = state.getCollisionShape(level, this.mutablePos);
         if (shape.isEmpty()) {
             return false;
@@ -443,14 +461,15 @@ public final class FartGasSimulation {
         return false;
     }
 
-    private void sampleEnvironment(ClientLevel level, Puff puff, boolean hasSkyLight) {
+    /** response: HOW FAR (0-1) THE PUFF'S LIGHT MOVES TOWARD THE LIGHT AT ITS NEW POSITION. */
+    private void sampleEnvironment(ClientLevel level, Puff puff, boolean hasSkyLight, float response) {
         this.mutablePos.set(Mth.floor(puff.x), Mth.floor(puff.y), Mth.floor(puff.z));
 
         // DIMENSIONS WITHOUT A SKY (NETHER) USE A FLAT AMBIENT TERM INSTEAD.
-        puff.targetSkyLight = hasSkyLight ? level.getBrightness(LightLayer.SKY, this.mutablePos) / 15.0F : 1.0F;
-        puff.targetBlockLight = level.getBrightness(LightLayer.BLOCK, this.mutablePos) / 15.0F;
-        puff.skyLight += (puff.targetSkyLight - puff.skyLight) * 0.25F;
-        puff.blockLight += (puff.targetBlockLight - puff.blockLight) * 0.25F;
+        float skyLight = hasSkyLight ? level.getBrightness(LightLayer.SKY, this.mutablePos) / 15.0F : 1.0F;
+        float blockLight = level.getBrightness(LightLayer.BLOCK, this.mutablePos) / 15.0F;
+        puff.skyLight += (skyLight - puff.skyLight) * response;
+        puff.blockLight += (blockLight - puff.blockLight) * response;
 
         // GAS THAT DRIFTS INTO WATER OR LAVA BUBBLES AWAY QUICKLY.
         if (!level.getFluidState(this.mutablePos).isEmpty()) {
@@ -467,7 +486,6 @@ public final class FartGasSimulation {
         float mass, prevMass;
         float temperature;
         float skyLight, blockLight;
-        float targetSkyLight, targetBlockLight;
         float seed;
         int age;
         int lifetime;
@@ -550,21 +568,11 @@ public final class FartGasSimulation {
             this.temperature = this.temperature * massWeightA + other.temperature * massWeightB;
             this.skyLight = this.skyLight * wa + other.skyLight * wb;
             this.blockLight = this.blockLight * wa + other.blockLight * wb;
-            this.targetSkyLight = this.targetSkyLight * wa + other.targetSkyLight * wb;
-            this.targetBlockLight = this.targetBlockLight * wa + other.targetBlockLight * wb;
 
             // LIVE AS LONG AS THE LONGER-LIVED HALF.
             int remaining = Math.max(this.lifetime - this.age, other.lifetime - other.age);
             this.age = Math.min(this.age, other.age);
             this.lifetime = this.age + remaining;
-        }
-
-        public float skyLight() {
-            return this.skyLight;
-        }
-
-        public float blockLight() {
-            return this.blockLight;
         }
     }
 

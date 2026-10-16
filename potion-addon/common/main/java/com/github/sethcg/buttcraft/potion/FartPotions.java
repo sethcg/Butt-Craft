@@ -21,6 +21,8 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * THE BOTTLED FART.
  *
@@ -31,14 +33,26 @@ import net.minecraft.world.phys.Vec3;
 public final class FartPotions {
 
     // DRINKING IT GIVES 30 SECONDS OF STENCH II, LIKE POISON II (20 TICKS = 1 SECOND).
-    // THROWN FARTS DON'T USE THIS, THEY GIVE THE STENCH I BELOW INSTEAD.
+    // THROWN FARTS DON'T USE THIS, THEY GIVE THE STENCH I OF THEIR ThrownFart INSTEAD.
     private static final int STENCH_DURATION_TICKS = 600;
     private static final int STENCH_AMPLIFIER = 1;
 
-    // A LINGERING FART'S CLOUD LASTS THIS LONG, INSTEAD OF THE USUAL 30 SECOND POTION CLOUD,
-    // AND GIVES A LONGER STENCH I THAN A NORMAL FART
-    public static final int LINGERING_CLOUD_TICKS = 360;
-    public static final int LINGERING_STENCH_TICKS = 360;
+    /**
+     * WHAT A THROWN FART RELEASES WHERE IT BREAKS: A FART CLOUD LASTING cloudTicks, WHERE EACH
+     * DOSE GIVES stenchTicks OF STENCH I. USED FOR BOTH THE CLOUD AND THE TOOLTIP, SO THEY MATCH.
+     */
+    public record ThrownFart(int cloudTicks, int stenchTicks) {
+        public MobEffectInstance stench() {
+            return new MobEffectInstance(ModEffects.STENCH, this.stenchTicks, 0);
+        }
+    }
+
+    // A SPLASH FART RELEASES A NORMAL FART CLOUD
+    private static final ThrownFart SPLASH = new ThrownFart(FartClouds.CLOUD_LIFETIME_TICKS, FartClouds.STENCH_DURATION_TICKS);
+
+    // A LINGERING FART'S CLOUD LASTS LONGER THAN A NORMAL FART'S (BUT NOT THE USUAL 30 SECOND
+    // POTION CLOUD) AND GIVES A LONGER STENCH I
+    private static final ThrownFart LINGERING = new ThrownFart(360, 360);
 
     // A THROWN FART BREAKS THIS FAR OFF THE BLOCK IT HIT
     private static final double SURFACE_OFFSET = 0.3;
@@ -79,14 +93,17 @@ public final class FartPotions {
         return stack.getOrDefault(DataComponents.POTION_CONTENTS, PotionContents.EMPTY).is(FART);
     }
 
-    // THE STENCH A THROWN FART REALLY GIVES, SO ITS TOOLTIP MATCHES. NULL FOR A
-    // DRINKABLE FART (OR ANYTHING ELSE), WHICH GIVES THE POTION'S OWN STENCH II.
-    public static MobEffectInstance thrownStench(ItemStack stack) {
+    // HOW A SPLASH OR LINGERING FART BEHAVES. NULL FOR A DRINKABLE FART, WHICH GIVES THE
+    // POTION'S OWN STENCH II, OR FOR ANYTHING THAT ISN'T A FART.
+    public static @Nullable ThrownFart thrown(ItemStack stack) {
+        if (!isFart(stack)) {
+            return null;
+        }
         if (stack.is(Items.SPLASH_POTION)) {
-            return new MobEffectInstance(ModEffects.STENCH, FartClouds.STENCH_DURATION_TICKS, 0);
+            return SPLASH;
         }
         if (stack.is(Items.LINGERING_POTION)) {
-            return new MobEffectInstance(ModEffects.STENCH, LINGERING_STENCH_TICKS, 0);
+            return LINGERING;
         }
 
         return null;

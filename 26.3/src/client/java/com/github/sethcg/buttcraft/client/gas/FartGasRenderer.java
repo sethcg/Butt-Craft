@@ -62,46 +62,13 @@ public final class FartGasRenderer {
     //   R = PERLIN-WORLEY, G = WORLEY FBM (LOW), B = WORLEY FBM (HIGH), A = PERLIN FBM
     private static final Identifier NOISE_TEXTURE = ButtCraft.id("textures/fart_gas_noise.png");
 
-    public static final RenderPipeline PIPELINE = RenderPipelines.registerOptional(
-        RenderPipeline.builder()
-            .withLocation(ButtCraft.id("pipeline/fart_gas"))
-            .withVertexShader(ButtCraft.id("core/fart_gas"))
-            .withFragmentShader(ButtCraft.id("core/fart_gas"))
-            .withBindGroupLayout(BindGroupLayouts.PROJECTION)
-            .withBindGroupLayout(BindGroupLayouts.FOG)
-            .withBindGroupLayout(BindGroupLayout.builder()
-                .withUniform("FartGasInfo", UniformType.UNIFORM_BUFFER)
-                .withUniform("NoiseSampler", UniformType.COMBINED_IMAGE_SAMPLER)
-                .withUniform("DepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
-                .build())
-            .withColorTargetState(new ColorTargetState(
-                Optional.empty(),
-                GpuFormat.RGBA8_UNORM,
-                ColorTargetState.WRITE_ALL))
-            .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-            .withCull(false)
-            .build());
+    // THE MARCH INTO THE CLEARED REDUCED-RESOLUTION TARGET (NO BLENDING)...
+    public static final RenderPipeline PIPELINE = marchPipeline("pipeline/fart_gas", Optional.empty());
 
-    // THE MARCH, BLENDED STRAIGHT ONTO THE SCENE (FULL RESOLUTION ONLY).
-    public static final RenderPipeline DIRECT_PIPELINE = RenderPipelines.registerOptional(
-        RenderPipeline.builder()
-            .withLocation(ButtCraft.id("pipeline/fart_gas_direct"))
-            .withVertexShader(ButtCraft.id("core/fart_gas"))
-            .withFragmentShader(ButtCraft.id("core/fart_gas"))
-            .withBindGroupLayout(BindGroupLayouts.PROJECTION)
-            .withBindGroupLayout(BindGroupLayouts.FOG)
-            .withBindGroupLayout(BindGroupLayout.builder()
-                .withUniform("FartGasInfo", UniformType.UNIFORM_BUFFER)
-                .withUniform("NoiseSampler", UniformType.COMBINED_IMAGE_SAMPLER)
-                .withUniform("DepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
-                .build())
-            .withColorTargetState(new ColorTargetState(
-                Optional.of(BlendFunction.TRANSLUCENT_PREMULTIPLIED_ALPHA),
-                GpuFormat.RGBA8_UNORM,
-                ColorTargetState.WRITE_ALL))
-            .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-            .withCull(false)
-            .build());
+    // ...OR BLENDED STRAIGHT ONTO THE SCENE (FULL RESOLUTION ONLY).
+    public static final RenderPipeline DIRECT_PIPELINE = marchPipeline(
+        "pipeline/fart_gas_direct",
+        Optional.of(BlendFunction.TRANSLUCENT_PREMULTIPLIED_ALPHA));
 
     public static final RenderPipeline COMPOSITE_PIPELINE = RenderPipelines.registerOptional(
         RenderPipeline.builder()
@@ -186,34 +153,27 @@ public final class FartGasRenderer {
             return;
         }
 
+        // AT FULL RESOLUTION THE MARCH BLENDS STRAIGHT ONTO THE SCENE AND NEEDS NO GAS TARGET.
+        boolean direct = quality.resolutionDivisor() == 1;
+        GpuTextureView gasView = null;
+        if (direct) {
+            this.destroyGasTarget();
+        } else {
+            gasView = this.gasTarget(mainTarget.width, mainTarget.height, quality).getColorTextureView();
+            if (gasView == null) {
+                return;
+            }
+        }
+
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
 
-        if (quality.resolutionDivisor() == 1) {
-            this.destroyGasTarget();
-
-            try (RenderPass pass = encoder.createRenderPass(() -> "ButtCraft fart gas march (direct)", colorView, Optional.empty())) {
-                RenderSystem.bindDefaultUniforms(pass);
-                pass.setPipeline(directPipeline);
-                pass.setUniform("FartGasInfo", buffer);
-                pass.setUniform("NoiseSampler", noise, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
-                pass.setUniform("DepthSampler", depthView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
-                pass.draw(6, 1, 0, 0);
-            }
-
-            this.ubo.rotate();
-            return;
-        }
-
-        GpuTextureView gasView = this.gasTarget(mainTarget.width, mainTarget.height, quality).getColorTextureView();
-        if (gasView == null) {
-            return;
-        }
-
-        // 1. MARCH AT REDUCED RESOLUTION. THE CLEAR MATTERS: THE UPSCALE READS TEXELS JUST
+        // 1. MARCH. AT REDUCED RESOLUTION THE CLEAR MATTERS: THE UPSCALE READS TEXELS JUST
         // OUTSIDE THE QUAD, WHICH MUST BE EMPTY RATHER THAN LAST FRAME'S GAS.
-        try (RenderPass pass = encoder.createRenderPass(() -> "ButtCraft fart gas march", gasView, CLEAR_TRANSPARENT)) {
+        try (RenderPass pass = direct
+                ? encoder.createRenderPass(() -> "ButtCraft fart gas march (direct)", colorView, Optional.empty())
+                : encoder.createRenderPass(() -> "ButtCraft fart gas march", gasView, CLEAR_TRANSPARENT)) {
             RenderSystem.bindDefaultUniforms(pass);
-            pass.setPipeline(pipeline);
+            pass.setPipeline(direct ? directPipeline : pipeline);
             pass.setUniform("FartGasInfo", buffer);
             pass.setUniform("NoiseSampler", noise, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
             pass.setUniform("DepthSampler", depthView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
@@ -221,16 +181,41 @@ public final class FartGasRenderer {
         }
 
         // 2. DEPTH-AWARE UPSCALE ONTO THE SCENE.
-        try (RenderPass pass = encoder.createRenderPass(() -> "ButtCraft fart gas composite", colorView, Optional.empty())) {
-            RenderSystem.bindDefaultUniforms(pass);
-            pass.setPipeline(compositePipeline);
-            pass.setUniform("FartGasInfo", buffer);
-            pass.setUniform("GasSampler", gasView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
-            pass.setUniform("DepthSampler", depthView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
-            pass.draw(6, 1, 0, 0);
+        if (!direct) {
+            try (RenderPass pass = encoder.createRenderPass(() -> "ButtCraft fart gas composite", colorView, Optional.empty())) {
+                RenderSystem.bindDefaultUniforms(pass);
+                pass.setPipeline(compositePipeline);
+                pass.setUniform("FartGasInfo", buffer);
+                pass.setUniform("GasSampler", gasView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+                pass.setUniform("DepthSampler", depthView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+                pass.draw(6, 1, 0, 0);
+            }
         }
 
         this.ubo.rotate();
+    }
+
+    /** THE RAY-MARCH PIPELINE, WRITING TO AN RGBA8 TARGET WITH THE GIVEN BLENDING. */
+    private static RenderPipeline marchPipeline(String location, Optional<BlendFunction> blend) {
+        return RenderPipelines.registerOptional(
+            RenderPipeline.builder()
+                .withLocation(ButtCraft.id(location))
+                .withVertexShader(ButtCraft.id("core/fart_gas"))
+                .withFragmentShader(ButtCraft.id("core/fart_gas"))
+                .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                .withBindGroupLayout(BindGroupLayouts.FOG)
+                .withBindGroupLayout(BindGroupLayout.builder()
+                    .withUniform("FartGasInfo", UniformType.UNIFORM_BUFFER)
+                    .withUniform("NoiseSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+                    .withUniform("DepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+                    .build())
+                .withColorTargetState(new ColorTargetState(
+                    blend,
+                    GpuFormat.RGBA8_UNORM,
+                    ColorTargetState.WRITE_ALL))
+                .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                .withCull(false)
+                .build());
     }
 
     public void close() {

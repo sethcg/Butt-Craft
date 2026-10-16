@@ -8,7 +8,6 @@ import java.util.function.Consumer;
 import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
-import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
@@ -45,19 +44,18 @@ public abstract class ItemStackMixin {
         TooltipFlag flag,
         CallbackInfo ci
     ) {
-        ItemStack stack = (ItemStack) (Object) this;
-        if (type != DataComponents.POTION_CONTENTS || !FartPotions.isFart(stack)) {
+        if (type != DataComponents.POTION_CONTENTS) {
             return;
         }
 
-        MobEffectInstance stench = FartPotions.thrownStench(stack);
-        if (stench == null) {
+        FartPotions.ThrownFart thrown = FartPotions.thrown((ItemStack) (Object) this);
+        if (thrown == null) {
             return;
         }
 
         // THE DURATION IS ALREADY THE REAL ONE, SO NO LINGERING DURATION SCALE
         if (display.shows(type)) {
-            PotionContents.addPotionTooltip(List.of(stench), lines, 1.0F, context.tickRate());
+            PotionContents.addPotionTooltip(List.of(thrown.stench()), lines, 1.0F, context.tickRate());
         }
 
         ci.cancel();

@@ -3,9 +3,11 @@ package com.github.sethcg.buttcraft;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 
+import net.minecraft.core.Holder;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.damagesource.DamageType;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -159,7 +161,12 @@ public final class FartClouds {
     }
 
     private static void tick(ServerLevel level) {
+        if (CLOUDS.isEmpty()) {
+            return;
+        }
+
         long currentTick = level.getGameTime();
+        Holder<DamageType> gasDamage = FartGasDamageSource.type(level);
 
         for (int i = CLOUDS.size() - 1; i >= 0; i--) {
             Cloud cloud = CLOUDS.get(i);
@@ -188,6 +195,11 @@ public final class FartClouds {
                     && entity.getBoundingBox().distanceToSqr(center) <= radiusSquared
             );
 
+            // CREDIT THE FARTER (IF THEY ARE STILL ONLINE)
+            ServerPlayer owner = cloud.owner == null || entities.isEmpty()
+                ? null
+                : level.getServer().getPlayerList().getPlayer(cloud.owner);
+
             for (LivingEntity entity : entities) {
                 // ENTITY WAS DOSED RECENTLY
                 Long nextDose = NEXT_DOSES.get(entity.getUUID());
@@ -210,14 +222,9 @@ public final class FartClouds {
                     continue;
                 }
 
-                // CREDIT THE FARTER (IF THEY ARE STILL ONLINE)
-                ServerPlayer owner = cloud.owner == null
-                    ? null
-                    : level.getServer().getPlayerList().getPlayer(cloud.owner);
-
                 NEXT_DOSES.put(entity.getUUID(), currentTick + DOSE_INTERVAL_TICKS);
                 entity.addEffect(stench, owner);
-                entity.hurtServer(level, FartGasDamageSource.create(level, owner), GAS_DAMAGE);
+                entity.hurtServer(level, FartGasDamageSource.create(gasDamage, owner), GAS_DAMAGE);
             }
 
             cloud.age++;

@@ -7,8 +7,8 @@ import com.github.sethcg.buttcraft.ButtCraft;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * ENTRY POINT FOR THE VOLUMETRIC FART GAS.
@@ -52,19 +52,12 @@ public final class FartGas {
         LevelRenderEvents.END_MAIN.register(RENDERER::render);
     }
 
-    public static void emit(Minecraft client, double x, double y, double z, float yaw) {
-        if (client.level == null) {
-            return;
-        }
-
-        SIMULATION.emit(x, y, z, yaw);
+    /** CALLERS MUST BE IN A WORLD (THE GAS IS DROPPED WHEN LEAVING IT). */
+    public static void emit(Vec3 pos, float yaw) {
+        SIMULATION.emit(pos, yaw);
     }
 
-    public static void emitBurst(Minecraft client, double x, double y, double z, int lifetimeTicks, float size) {
-        if (client.level == null) {
-            return;
-        }
-
-        SIMULATION.emitBurst(x, y, z, lifetimeTicks, size);
+    public static void emitBurst(Vec3 pos, int lifetimeTicks, float size) {
+        SIMULATION.emitBurst(pos, lifetimeTicks, size);
     }
 }

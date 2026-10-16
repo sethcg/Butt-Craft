@@ -88,21 +88,18 @@ public final class FartGasUniforms {
         int count = sortVisible(puffs, partial);
         builder.putIVec4(count, quality.maxViewSteps(), quality.shadowSteps(), quality.resolutionDivisor());
 
-        for (int i = 0; i < FartGasSimulation.MAX_PUFFS; i++) {
-            if (i < count) {
-                FartGasSimulation.Puff puff = SORTED[i];
-                float radius = puff.radius(partial);
-                builder.putVec4(
-                    (float) (puff.x(partial) - cameraPos.x),
-                    (float) (puff.y(partial) - cameraPos.y),
-                    (float) (puff.z(partial) - cameraPos.z),
-                    radius);
-                builder.putVec4(SORTED_DENSITY[i], puff.skyLight(), puff.blockLight(), 1.0F / (radius * radius));
-                SORTED[i] = null;
-            } else {
-                builder.putVec4(0.0F, 0.0F, 0.0F, 0.0F);
-                builder.putVec4(0.0F, 0.0F, 0.0F, 0.0F);
-            }
+        // ONLY THE VISIBLE PUFFS: THE SHADERS NEVER READ PAST THE COUNT, SO THE REST OF THE
+        // ARRAY CAN HOLD WHATEVER WAS THERE BEFORE.
+        for (int i = 0; i < count; i++) {
+            FartGasSimulation.Puff puff = SORTED[i];
+            float radius = puff.radius(partial);
+            builder.putVec4(
+                (float) (puff.x(partial) - cameraPos.x),
+                (float) (puff.y(partial) - cameraPos.y),
+                (float) (puff.z(partial) - cameraPos.z),
+                radius);
+            builder.putVec4(SORTED_DENSITY[i], puff.skyLight, puff.blockLight, 1.0F / (radius * radius));
+            SORTED[i] = null;
         }
 
         return count;

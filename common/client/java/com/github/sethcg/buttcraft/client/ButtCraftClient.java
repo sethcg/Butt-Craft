@@ -18,10 +18,6 @@ import net.minecraft.sounds.SoundSource;
 
 public class ButtCraftClient implements ClientModInitializer {
 
-    // CLIENT-SIDE COOLDOWN (NOT NECESSARY AS SERVER ENFORCES THIS)
-    private static final int FART_COOLDOWN_TICKS = 20;
-    private long fartCooldown = 0;
-
     @Override
     public void onInitializeClient() {
         ButtCraft.LOGGER.info("BUTTCRAFT CLIENT INITIALIZED.");
@@ -32,38 +28,25 @@ public class ButtCraftClient implements ClientModInitializer {
         // CHECK FOR THE FART KEY EVERY CLIENT TICK
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
 
-            // HANDLE EVERY FART KEY PRESS THAT HAS BEEN REGISTERED
+            // HANDLE EVERY FART KEY PRESS THAT HAS BEEN REGISTERED.
+            // THE SERVER ENFORCES THE COOLDOWN, SO EVERY PRESS IS SENT.
             while (KeyBindings.FART_KEY.consumeClick()) {
-                if (client.player == null)
-                    continue;
-
-                if (!canFart(client))
-                    continue;
-
-                // TELL THE SERVER THAT THE PLAYER PRESSED THE FART KEY
-                ClientPlayNetworking.send(new FartRequestPayload());
+                if (client.player != null) {
+                    ClientPlayNetworking.send(new FartRequestPayload());
+                }
             }
         });
 
-        // RECEIVE FARTS FROM THE SERVER
+        // RECEIVE FARTS FROM THE SERVER (HANDLERS RUN ON THE RENDER THREAD)
         ClientPlayNetworking.registerGlobalReceiver(
                 FartPayload.TYPE,
                 (payload, context) -> {
-                    // RUN THE SOUND AND GAS CODE ON THE CLIENT THREAD
                     Minecraft client = context.client();
-
-                    if (client.player == null)
+                    if (client.level == null)
                         return;
 
-                    double x = payload.x();
-                    double y = payload.y();
-                    double z = payload.z();
-                    float yaw = payload.yaw();
-
-                    client.execute(() -> {
-                        playFart(client);
-                        FartGas.emit(client, x, y, z, yaw);
-                    });
+                    playFart(client);
+                    FartGas.emit(payload.pos(), payload.yaw());
                 });
 
         // RECEIVE FARTS THAT BURST OUT AROUND A POINT (E.G. A SPLASH POTION)
@@ -71,38 +54,15 @@ public class ButtCraftClient implements ClientModInitializer {
                 FartBurstPayload.TYPE,
                 (payload, context) -> {
                     Minecraft client = context.client();
-
-                    if (client.player == null)
+                    if (client.level == null)
                         return;
 
-                    double x = payload.x();
-                    double y = payload.y();
-                    double z = payload.z();
-                    int lifetimeTicks = payload.lifetimeTicks();
-                    float size = payload.size();
-
-                    client.execute(() -> {
-                        playFart(client);
-                        FartGas.emitBurst(client, x, y, z, lifetimeTicks, size);
-                    });
+                    playFart(client);
+                    FartGas.emitBurst(payload.pos(), payload.lifetimeTicks(), payload.size());
                 });
     }
 
-    private boolean canFart(Minecraft client) {
-        long currentTick = client.player.level().getGameTime();
-
-        if (currentTick < this.fartCooldown) {
-            return false;
-        }
-
-        this.fartCooldown = currentTick + FART_COOLDOWN_TICKS;
-
-        return true;
-    }
-
     private void playFart(Minecraft client) {
-        if (client.player == null) return;
-
         // NON-POSITIONAL: THE SERVER ONLY SENDS FARTS TO PLAYERS WITHIN RANGE,
         // SO EVERYONE WHO RECEIVES ONE HEARS IT AT FULL VOLUME.
         SimpleSoundInstance sound = new SimpleSoundInstance(
@@ -110,7 +70,7 @@ public class ButtCraftClient implements ClientModInitializer {
                 SoundSource.PLAYERS,
                 1.0F,
                 1.0F,
-                client.player.level().getRandom(),
+                client.level.getRandom(),
                 false,
                 0,
                 SoundInstance.Attenuation.NONE,
