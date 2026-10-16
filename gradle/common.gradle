@@ -1,0 +1,55 @@
+// BUILD LOGIC SHARED BY EVERY MOD JAR (THE BASE MOD AND THE POTION ADD-ON), FOR EVERY
+// MINECRAFT VERSION PROJECT. APPLIED FROM shared.gradle AND potion-addon.gradle AFTER THEY
+// SET version AND base.archivesName, WHICH THIS SCRIPT READS.
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+processResources {
+	def version = project.version
+	def minecraftVersion = project.minecraft_version
+	def loaderVersion = project.loader_version
+	def javaVersion = project.java_version
+
+	inputs.property "version", version
+	inputs.property "minecraft_version", minecraftVersion
+	inputs.property "loader_version", loaderVersion
+	inputs.property "java_version", javaVersion
+
+	filesMatching("fabric.mod.json") {
+		expand(
+			"version": version,
+			"minecraft_version": minecraftVersion,
+			"loader_version": loaderVersion,
+			"java_version": javaVersion
+		)
+	}
+}
+
+def javaVersion = project.java_version as Integer
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = javaVersion
+}
+
+java {
+	// LOOM ATTACHES THE SOURCES JAR TO THE BUILD; WITHOUT THIS, NO SOURCES ARE GENERATED.
+	withSourcesJar()
+
+	sourceCompatibility = JavaVersion.toVersion(javaVersion)
+	targetCompatibility = JavaVersion.toVersion(javaVersion)
+}
+
+// THE REPO'S LICENSE, RENAMED PER JAR SO IT DOESN'T CLASH WITH OTHER MODS' IN A MERGED
+// CLASSPATH. SKIPPED UNTIL THE FILE EXISTS.
+jar {
+	def archivesName = base.archivesName.get()
+
+	from(rootProject.file("LICENSE")) {
+		rename { "${it}_${archivesName}" }
+	}
+}
