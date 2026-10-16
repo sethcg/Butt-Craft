@@ -566,10 +566,6 @@ public final class FartGasSimulation {
         public float blockLight() {
             return this.blockLight;
         }
-
-        public float seed() {
-            return this.seed;
-        }
     }
 
     private static final class Emitter {

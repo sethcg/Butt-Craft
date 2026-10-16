@@ -50,6 +50,9 @@ import net.minecraft.resources.Identifier;
  *   PREMULTIPLIED-ALPHA BLENDING.</li>
  * </ol>
  *
+ * <p>AT FULL RESOLUTION THE UPSCALE WOULD ONLY COPY PIXELS, SO A SINGLE PASS MARCHES
+ * STRAIGHT ONTO THE MAIN COLOR TARGET WITH PREMULTIPLIED-ALPHA BLENDING INSTEAD.
+ *
  * <p>DEPTH IS NEVER ATTACHED, SO THERE IS NO READ/WRITE FEEDBACK LOOP.
  */
 public final class FartGasRenderer {
@@ -73,6 +76,27 @@ public final class FartGasRenderer {
                 .build())
             .withColorTargetState(new ColorTargetState(
                 Optional.empty(),
+                GpuFormat.RGBA8_UNORM,
+                ColorTargetState.WRITE_ALL))
+            .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+            .withCull(false)
+            .build());
+
+    // THE MARCH, BLENDED STRAIGHT ONTO THE SCENE (FULL RESOLUTION ONLY).
+    public static final RenderPipeline DIRECT_PIPELINE = RenderPipelines.registerOptional(
+        RenderPipeline.builder()
+            .withLocation(ButtCraft.id("pipeline/fart_gas_direct"))
+            .withVertexShader(ButtCraft.id("core/fart_gas"))
+            .withFragmentShader(ButtCraft.id("core/fart_gas"))
+            .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+            .withBindGroupLayout(BindGroupLayouts.FOG)
+            .withBindGroupLayout(BindGroupLayout.builder()
+                .withUniform("FartGasInfo", UniformType.UNIFORM_BUFFER)
+                .withUniform("NoiseSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+                .withUniform("DepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+                .build())
+            .withColorTargetState(new ColorTargetState(
+                Optional.of(BlendFunction.TRANSLUCENT_PREMULTIPLIED_ALPHA),
                 GpuFormat.RGBA8_UNORM,
                 ColorTargetState.WRITE_ALL))
             .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
@@ -121,7 +145,8 @@ public final class FartGasRenderer {
 
         CompiledRenderPipeline pipeline = RenderSystem.getCompiledPipelineNullable(PIPELINE);
         CompiledRenderPipeline compositePipeline = RenderSystem.getCompiledPipelineNullable(COMPOSITE_PIPELINE);
-        if (pipeline == null || compositePipeline == null) {
+        CompiledRenderPipeline directPipeline = RenderSystem.getCompiledPipelineNullable(DIRECT_PIPELINE);
+        if (pipeline == null || compositePipeline == null || directPipeline == null) {
             if (!this.warnedMissingPipeline) {
                 this.warnedMissingPipeline = true;
                 ButtCraft.LOGGER.warn("FART GAS PIPELINE IS NOT AVAILABLE (SHADER FAILED TO COMPILE?). GAS WILL NOT RENDER.");
@@ -151,16 +176,38 @@ public final class FartGasRenderer {
         FartGasSettings.Values quality = FartGasSettings.current();
 
         GpuBuffer buffer = this.ubo.currentBuffer();
+        int visiblePuffs;
         try (GpuBufferSlice.MappedView view = buffer.slice().map(false, true)) {
-            FartGasUniforms.write(view.data(), context.levelState(), puffs, quality);
+            visiblePuffs = FartGasUniforms.write(view.data(), context.levelState(), puffs, quality);
+        }
+
+        // EVERY PUFF IS TOO FAINT TO SEE (E.G. THE TAIL END OF A FADING CLOUD).
+        if (visiblePuffs == 0) {
+            return;
+        }
+
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+
+        if (quality.resolutionDivisor() == 1) {
+            this.destroyGasTarget();
+
+            try (RenderPass pass = encoder.createRenderPass(() -> "ButtCraft fart gas march (direct)", colorView, Optional.empty())) {
+                RenderSystem.bindDefaultUniforms(pass);
+                pass.setPipeline(directPipeline);
+                pass.setUniform("FartGasInfo", buffer);
+                pass.setUniform("NoiseSampler", noise, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
+                pass.setUniform("DepthSampler", depthView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+                pass.draw(6, 1, 0, 0);
+            }
+
+            this.ubo.rotate();
+            return;
         }
 
         GpuTextureView gasView = this.gasTarget(mainTarget.width, mainTarget.height, quality).getColorTextureView();
         if (gasView == null) {
             return;
         }
-
-        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
 
         // 1. MARCH AT REDUCED RESOLUTION. THE CLEAR MATTERS: THE UPSCALE READS TEXELS JUST
         // OUTSIDE THE QUAD, WHICH MUST BE EMPTY RATHER THAN LAST FRAME'S GAS.
@@ -192,6 +239,10 @@ public final class FartGasRenderer {
             this.ubo = null;
         }
 
+        this.destroyGasTarget();
+    }
+
+    private void destroyGasTarget() {
         if (this.gasTarget != null) {
             this.gasTarget.destroyBuffers();
             this.gasTarget = null;

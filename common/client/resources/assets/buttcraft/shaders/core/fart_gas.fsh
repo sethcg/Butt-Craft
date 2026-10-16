@@ -3,54 +3,49 @@
 
 #include <minecraft:projection.glsl>
 #include <minecraft:fog.glsl>
+#include <buttcraft:fart_gas_common.glsl>
 
 // =============================================================================
 // BUTTCRAFT VOLUMETRIC FART GAS
 //
-// REDUCED-RESOLUTION RAY MARCHER (UPSCALED BY fart_gas_composite.fsh). THE CPU
-// SIMULATES A SET OF SPHERICAL GAS "PUFFS" (POSITION, RADIUS, DENSITY, LOCAL
+// RAY MARCHER, USUALLY AT REDUCED RESOLUTION (UPSCALED BY fart_gas_composite.fsh). THE
+// CPU SIMULATES A SET OF SPHERICAL GAS "PUFFS" (POSITION, RADIUS, DENSITY, LOCAL
 // LIGHT LEVEL). THIS SHADER TURNS THEM INTO A CONTINUOUS PARTICIPATING MEDIUM:
 //
-//   1. INTERSECT THE VIEW RAY WITH EVERY PUFF'S BOUNDING SPHERE.
-//   2. MARCH THE UNION OF THOSE INTERVALS, CLIPPED BY THE SCENE DEPTH BUFFER.
+//   1. INTERSECT THE VIEW RAY WITH EVERY PUFF'S BOUNDING SPHERE AND MERGE THE HITS
+//      INTO DISJOINT SPANS. ALSO COLLECT NEARBY PUFFS THAT CAN ONLY SHADOW THE RAY.
+//   2. MARCH ONLY THOSE SPANS (GAPS BETWEEN SEPARATE CLOUDS COST NO STEPS), CLIPPED
+//      BY THE SCENE DEPTH BUFFER.
 //   3. BUILD DENSITY FROM A SMOOTH METABALL FIELD ERODED BY TILEABLE 3D
 //      PERLIN-WORLEY / WORLEY NOISE, DOMAIN-WARPED FOR SWIRLING WISPS.
 //   4. LIGHT EACH SAMPLE WITH A SHORT SHADOW MARCH TOWARD THE SUN/MOON, A
 //      DUAL-LOBE HENYEY-GREENSTEIN PHASE FUNCTION, A MULTIPLE-SCATTERING
 //      OCTAVE APPROXIMATION, SKY AMBIENT AND BLOCK LIGHT.
 //   5. INTEGRATE WITH ENERGY-CONSERVING BEER-LAMBERT STEPS AND APPLY VANILLA
-//      FOG. OUTPUT IS PREMULTIPLIED ALPHA INTO A CLEARED REDUCED-RESOLUTION TARGET.
+//      FOG. OUTPUT IS PREMULTIPLIED ALPHA.
 // =============================================================================
 
-#define MAX_PUFFS 64
-#define MAX_HITS 24
+// LOOP BOUNDS: AT LEAST FartGasSettings.MAX_VIEW_STEPS / MAX_SHADOW_STEPS.
+#define MAX_VIEW_STEPS 128
+#define MAX_SHADOW_STEPS 8
 
-layout(std140) uniform FartGasInfo {
-    mat4 ViewToWorld;      // VIEW SPACE -> CAMERA-RELATIVE WORLD SPACE (ROTATION ONLY)
-    vec4 NoiseOrigin;      // XYZ = CAMERA POSITION WRAPPED TO THE NOISE PERIOD, W = TIME IN SECONDS
-    vec4 LightDirection;   // XYZ = WORLD DIRECTION TOWARD SUN/MOON, W = DIRECT LIGHT STRENGTH
-    vec4 LightColor;       // RGB = DIRECT LIGHT COLOR
-    vec4 AmbientColor;     // RGB = SKY AMBIENT COLOR
-    vec4 GasColor;         // RGB = SCATTERING ALBEDO, W = DENSITY MULTIPLIER
-    ivec4 Counts;          // X = PUFF COUNT, Y = MAX VIEW STEPS, Z = SHADOW STEPS, W = RESOLUTION DIVISOR
-    vec4 Puffs[MAX_PUFFS * 2];
-    // PUFFS[2I + 0] = CAMERA-RELATIVE CENTER XYZ, RADIUS
-    // PUFFS[2I + 1] = DENSITY, SKY LIGHT (0-1), BLOCK LIGHT (0-1), SEED
-};
+// PUFFS THE VIEW RAY PASSES THROUGH, AND THE TOTAL INCLUDING PUFFS THAT ONLY SHADOW IT.
+#define MAX_VIEW_HITS 24
+#define MAX_HITS 32
 
 uniform sampler2D NoiseSampler;
 uniform sampler2D DepthSampler;
 
-layout(location = 0) in vec2 texCoord;
-layout(location = 1) in vec4 unprojectBase;
-layout(location = 2) in vec4 unprojectDepth;
+layout(location = 0) in vec4 unprojectBase;
+layout(location = 1) in vec4 unprojectDepth;
 
 layout(location = 0) out vec4 fragColor;
 
 // -----------------------------------------------------------------------------
 // TILEABLE 3D NOISE STORED AS A 2D ATLAS: 64 SLICES OF 64x64, EACH WITH A 1px
 // WRAPPED GUTTER, LAID OUT IN AN 8x8 GRID (528x528). THE GUTTER LETS HARDWARE
-// BILINEAR FILTERING WRAP CORRECTLY; THE THIRD AXIS IS INTERPOLATED HERE.
+// BILINEAR FILTERING WRAP CORRECTLY; THE THIRD AXIS IS INTERPOLATED HERE (THE GPU
+// API ONLY HAS 2D AND CUBEMAP TEXTURES, SO NO HARDWARE 3D SAMPLING).
 //   R = PERLIN-WORLEY (BASE SHAPE)
 //   G = WORLEY FBM, LOW FREQUENCY
 //   B = WORLEY FBM, HIGH FREQUENCY
@@ -66,6 +61,12 @@ const float NOISE_ATLAS = 528.0;
 const float WARP_SCALE = 4.0;
 const float SHAPE_SCALE = 1.5;
 const float DETAIL_SCALE = 0.5;
+
+// NOISE SCROLL SPEEDS (PERIODS PER SECOND). THE CPU WRAPS TIME AT 2000 SECONDS, WHICH
+// TIMES EACH OF THESE IS A WHOLE NUMBER, SO THE WRAP IS SEAMLESS. KEEP IT THAT WAY.
+const vec3 WARP_SCROLL = vec3(0.0, -0.0045, 0.002);
+const vec3 SHAPE_SCROLL = vec3(0.003, 0.011, -0.004);
+const vec3 DETAIL_SCROLL = vec3(-0.012, 0.035, 0.009);
 
 // DISTANCE LOD (BLOCKS): VIEW STEPS GROW PAST STEP_LOD_START, AND THE DETAIL
 // OCTAVE FADES OUT BETWEEN DETAIL_LOD_START AND DETAIL_LOD_END.
@@ -131,12 +132,21 @@ float interleavedGradientNoise(vec2 pixel) {
 // -----------------------------------------------------------------------------
 // PUFF FIELD
 // -----------------------------------------------------------------------------
+
+// hitList[0, viewHitCount) ARE ON THE VIEW RAY. hitList[viewHitCount, hitCount) ARE OFF IT
+// BUT WITHIN SHADOW_REACH, SO THEY ONLY MATTER TO SHADOW SAMPLES.
 int hitList[MAX_HITS];
+int viewHitCount = 0;
 int hitCount = 0;
 
-// SMOOTH METABALL FIELD. X = GEOMETRIC COVERAGE (0-1, INDEPENDENT OF HOW
-// THIN THE GAS IS), Y = FIELD-WEIGHTED GAS DENSITY. ALSO RETURNS THE WEIGHTED
-// SKY LIGHT, BLOCK LIGHT AND NORMALISED HEIGHT INSIDE THE PUFF (FOR AMBIENT
+// THE VIEW RAY'S PUFF INTERVALS, SORTED AND MERGED INTO DISJOINT SPANS.
+float spanStart[MAX_VIEW_HITS];
+float spanEnd[MAX_VIEW_HITS];
+int spanCount = 0;
+
+// SMOOTH METABALL FIELD OVER THE VIEW-RAY PUFFS. X = GEOMETRIC COVERAGE (0-1,
+// INDEPENDENT OF HOW THIN THE GAS IS), Y = FIELD-WEIGHTED GAS DENSITY. ALSO RETURNS THE
+// WEIGHTED SKY LIGHT, BLOCK LIGHT AND NORMALISED HEIGHT INSIDE THE PUFF (FOR AMBIENT
 // OCCLUSION). KEEPING SHAPE AND DENSITY SEPARATE MEANS DISSIPATING GAS GETS
 // MORE TRANSPARENT INSTEAD OF BEING ERODED INTO ISOLATED DOTS.
 vec2 puffField(vec3 p, out vec3 info) {
@@ -144,20 +154,20 @@ vec2 puffField(vec3 p, out vec3 info) {
     float weightSum = 0.0;
     info = vec3(0.0);
 
-    for (int k = 0; k < MAX_HITS; k++) {
-        if (k >= hitCount) {
+    for (int k = 0; k < MAX_VIEW_HITS; k++) {
+        if (k >= viewHitCount) {
             break;
         }
 
         int i = hitList[k] * 2;
         vec4 shape = Puffs[i];
+        vec4 data = Puffs[i + 1];
         vec3 d = p - shape.xyz;
-        float d2 = dot(d, d) / (shape.w * shape.w);
+        float d2 = dot(d, d) * data.w;
         if (d2 >= 1.0) {
             continue;
         }
 
-        vec4 data = Puffs[i + 1];
         float w = 1.0 - d2;
         w = w * w;
         densitySum += w * data.x;
@@ -170,76 +180,89 @@ vec2 puffField(vec3 p, out vec3 info) {
     return vec2(clamp(weightSum * 1.35, 0.0, 1.0), densitySum * inverseWeight);
 }
 
+// THE SAME FIELD WITHOUT THE LIGHTING INFO, OVER EVERY PUFF THAT CAN SHADOW THE RAY.
+vec2 puffCoverage(vec3 p) {
+    float densitySum = 0.0;
+    float weightSum = 0.0;
+
+    for (int k = 0; k < MAX_HITS; k++) {
+        if (k >= hitCount) {
+            break;
+        }
+
+        int i = hitList[k] * 2;
+        vec4 data = Puffs[i + 1];
+        vec3 d = p - Puffs[i].xyz;
+        float d2 = dot(d, d) * data.w;
+        if (d2 >= 1.0) {
+            continue;
+        }
+
+        float w = 1.0 - d2;
+        w = w * w;
+        densitySum += w * data.x;
+        weightSum += w;
+    }
+
+    return vec2(clamp(weightSum * 1.35, 0.0, 1.0), densitySum / max(weightSum, 1e-4));
+}
+
 vec3 warpOffset(vec3 wp, float time) {
-    vec4 n = noise3(wp / WARP_SCALE + vec3(0.0, -0.0045, 0.002) * time);
+    vec4 n = noise3(wp / WARP_SCALE + WARP_SCROLL * time);
     return (vec3(n.a, n.g, n.b) - 0.5) * 2.2;
 }
 
-// FULL-QUALITY DENSITY FOR VIEW SAMPLES. DETAIL (0-1) SCALES THE HIGH-FREQUENCY
-// EROSION; AT 0 ITS NOISE FETCH IS SKIPPED.
-float gasDensity(vec3 p, vec2 field, float height, float detailAmount) {
-    vec3 wp = p + NoiseOrigin.xyz;
-    float time = NoiseOrigin.w;
-    vec3 warp = warpOffset(wp, time);
-
-    // BASE SHAPE: ERODE THE SMOOTH FIELD WITH LOW-FREQUENCY PERLIN-WORLEY.
-    vec4 shapeNoise = noise3((wp + warp) / SHAPE_SCALE + vec3(0.003, 0.011, -0.004) * time);
+// BASE SHAPE: ERODE THE SMOOTH FIELD WITH LOW-FREQUENCY PERLIN-WORLEY. EVEN FULLY
+// COVERED REGIONS KEEP SOME EROSION SO THE CORE NEVER LOOKS LIKE SMOOTH FOG.
+float baseShape(vec3 wp, vec3 warp, float coverage, float time) {
+    vec4 shapeNoise = noise3((wp + warp) / SHAPE_SCALE + SHAPE_SCROLL * time);
     float shape = shapeNoise.r * 0.55 + shapeNoise.g * 0.3 + shapeNoise.b * 0.15;
-    // EVEN FULLY COVERED REGIONS KEEP SOME EROSION SO THE CORE NEVER LOOKS LIKE SMOOTH FOG.
-    float density = remap(shape, 1.0 - field.x * 0.74, 1.0) * field.x;
+    return remap(shape, 1.0 - coverage * 0.74, 1.0) * coverage;
+}
+
+// FULL-QUALITY DENSITY FOR VIEW SAMPLES (wp = WRAPPED WORLD POSITION). DETAIL (0-1)
+// SCALES THE HIGH-FREQUENCY EROSION; AT 0 ITS NOISE FETCH IS SKIPPED.
+float gasDensity(vec3 wp, vec3 warp, float time, vec2 field, float height, float detailAmount) {
+    float density = baseShape(wp, warp, field.x, time);
     if (density <= 0.0) {
         return 0.0;
     }
 
-    if (detailAmount <= 0.0) {
-        return density * field.y * GasColor.w;
+    if (detailAmount > 0.0) {
+        // DETAIL EROSION: BILLOWY ON TOP, WISPY UNDERNEATH, STRONGEST AT THE EDGES.
+        vec4 detailNoise = noise3((wp + warp * 0.55) / DETAIL_SCALE + DETAIL_SCROLL * time);
+        float detail = detailNoise.g * 0.6 + detailNoise.b * 0.4;
+        detail = mix(1.0 - detail, detail, clamp(height * 1.6, 0.0, 1.0));
+        density = mix(density, remap(density, detail * 0.55 * (1.0 - density * 0.45), 1.0), detailAmount);
     }
-
-    // DETAIL EROSION: BILLOWY ON TOP, WISPY UNDERNEATH, STRONGEST AT THE EDGES.
-    vec4 detailNoise = noise3((wp + warp * 0.55) / DETAIL_SCALE + vec3(-0.012, 0.035, 0.009) * time);
-    float detail = detailNoise.g * 0.6 + detailNoise.b * 0.4;
-    detail = mix(1.0 - detail, detail, clamp(height * 1.6, 0.0, 1.0));
-    density = mix(density, remap(density, detail * 0.55 * (1.0 - density * 0.45), 1.0), detailAmount);
 
     return density * field.y * GasColor.w;
 }
 
-// CHEAPER DENSITY FOR SHADOW SAMPLES (NO DETAIL OCTAVE).
-float gasDensityLow(vec3 p) {
-    vec3 info;
-    vec2 field = puffField(p, info);
+// CHEAPER DENSITY FOR SHADOW SAMPLES: NO DETAIL OCTAVE, AND IT REUSES THE VIEW SAMPLE'S
+// DOMAIN WARP INSTEAD OF FETCHING ITS OWN. THE WARP CHANGES OVER WARP_SCALE (4 BLOCKS),
+// WELL BEYOND SHADOW_REACH, SO SHADOWS STILL FOLLOW THE VISIBLE (WARPED) SHAPES.
+float shadowDensity(vec3 p, vec3 warp, float time) {
+    vec2 field = puffCoverage(p);
     if (field.x <= 0.002) {
         return 0.0;
     }
 
-    vec3 wp = p + NoiseOrigin.xyz;
-    float time = NoiseOrigin.w;
-    vec4 shapeNoise = noise3(wp / SHAPE_SCALE + vec3(0.003, 0.011, -0.004) * time);
-    float shape = shapeNoise.r * 0.55 + shapeNoise.g * 0.3 + shapeNoise.b * 0.15;
-    return remap(shape, 1.0 - field.x * 0.74, 1.0) * field.x * field.y * GasColor.w;
+    return baseShape(p + NoiseOrigin.xyz, warp, field.x, time) * field.y * GasColor.w;
 }
 
 // -----------------------------------------------------------------------------
 
-float deviceToNdcDepth(float deviceDepth) {
-    #ifdef RENDERPEARL_DEPTH_IS_ZERO_TO_ONE
-    return deviceDepth;
-    #else
-    return deviceDepth * 2.0 - 1.0;
-    #endif
+vec3 unprojectView(float deviceDepth) {
+    return unproject(unprojectBase, unprojectDepth, deviceDepth);
 }
 
-// VIEW-SPACE POSITION AT THIS PIXEL FOR A DEVICE DEPTH (REVERSED-Z: 1 = NEAR, 0 = FAR).
-vec3 unprojectView(float deviceDepth) {
-    vec4 h = unprojectBase + deviceToNdcDepth(deviceDepth) * unprojectDepth;
-    return h.xyz / h.w;
+bool isViewHit(uvec2 mask, int i) {
+    return (mask[i >> 5] & (1u << uint(i & 31))) != 0u;
 }
 
 void main() {
     int puffCount = min(Counts.x, MAX_PUFFS);
-    if (puffCount <= 0) {
-        discard;
-    }
 
     // RAY FROM THE NEAR PLANE THROUGH A FAR POINT. BOTH ARE REAL UNPROJECTED POINTS,
     // SO THE RAY STAYS CORRECT WHILE VIEW BOBBING OFFSETS THE EYE.
@@ -249,9 +272,9 @@ void main() {
     vec3 ro = viewToWorld * nearView;
     vec3 rd = normalize(viewToWorld * (farView - nearView));
 
-    // DISTANCE ALONG THE RAY TO THE OPAQUE SCENE (SKY = 0 = INFINITELY FAR). THIS PASS
-    // IS REDUCED RESOLUTION: EACH PIXEL READS THE FULL-RESOLUTION DEPTH AT THE CENTER OF
-    // THE BLOCK IT COVERS, THE SAME TEXEL THE COMPOSITE PASS COMPARES AGAINST WHEN UPSCALING.
+    // DISTANCE ALONG THE RAY TO THE OPAQUE SCENE (SKY = 0 = INFINITELY FAR). AT REDUCED
+    // RESOLUTION EACH PIXEL READS THE FULL-RESOLUTION DEPTH AT THE CENTER OF THE BLOCK IT
+    // COVERS, THE SAME TEXEL THE COMPOSITE PASS COMPARES AGAINST WHEN UPSCALING.
     int divisor = max(Counts.w, 1);
     ivec2 depthCoord = min(ivec2(gl_FragCoord.xy) * divisor + divisor / 2, textureSize(DepthSampler, 0) - 1);
     float deviceDepth = texelFetch(DepthSampler, depthCoord, 0).r;
@@ -260,52 +283,134 @@ void main() {
         sceneT = max(dot(viewToWorld * unprojectView(deviceDepth) - ro, rd), 0.0);
     }
 
-    // 1. BROAD PHASE: RAY / SPHERE AGAINST EVERY PUFF.
-    float tStart = 1e9;
-    float tEnd = 0.0;
+    // 1. BROAD PHASE: RAY / SPHERE AGAINST EVERY PUFF. THE CPU UPLOADS THE DENSEST FIRST,
+    // SO IF THE LIST FILLS UP IT'S THE FAINTEST PUFFS THAT GET LEFT OUT.
+    uvec2 viewMask = uvec2(0u);
     for (int i = 0; i < MAX_PUFFS; i++) {
-        if (i >= puffCount || hitCount >= MAX_HITS) {
+        if (i >= puffCount || viewHitCount >= MAX_VIEW_HITS) {
             break;
         }
 
         vec4 shape = Puffs[i * 2];
         vec3 toCenter = shape.xyz - ro;
         float b = dot(toCenter, rd);
-        float c = dot(toCenter, toCenter) - shape.w * shape.w;
-        float h = b * b - c;
+        float h = b * b - (dot(toCenter, toCenter) - shape.w * shape.w);
         if (h <= 0.0) {
             continue;
         }
 
         h = sqrt(h);
         float t0 = max(b - h, 0.0);
-        float t1 = b + h;
-        if (t1 <= 0.0 || t0 >= sceneT) {
+        float t1 = min(b + h, sceneT);
+        if (t1 <= t0) {
             continue;
         }
 
-        hitList[hitCount++] = i;
-        tStart = min(tStart, t0);
-        tEnd = max(tEnd, t1);
+        spanStart[viewHitCount] = t0;
+        spanEnd[viewHitCount] = t1;
+        hitList[viewHitCount++] = i;
+        viewMask[i >> 5] |= 1u << uint(i & 31);
     }
 
-    tEnd = min(tEnd, sceneT);
-    if (hitCount == 0 || tEnd <= tStart) {
+    if (viewHitCount == 0) {
         discard;
     }
 
-    // 2. MARCH SETUP.
+    // SORT THE INTERVALS BY START (INSERTION SORT; THERE ARE FEW) AND MERGE OVERLAPS.
+    for (int a = 1; a < MAX_VIEW_HITS; a++) {
+        if (a >= viewHitCount) {
+            break;
+        }
+
+        float s = spanStart[a];
+        float e = spanEnd[a];
+        int j = a;
+        for (; j > 0; j--) {
+            if (spanStart[j - 1] <= s) {
+                break;
+            }
+
+            spanStart[j] = spanStart[j - 1];
+            spanEnd[j] = spanEnd[j - 1];
+        }
+
+        spanStart[j] = s;
+        spanEnd[j] = e;
+    }
+
+    spanCount = 1;
+    for (int a = 1; a < MAX_VIEW_HITS; a++) {
+        if (a >= viewHitCount) {
+            break;
+        }
+
+        if (spanStart[a] <= spanEnd[spanCount - 1]) {
+            spanEnd[spanCount - 1] = max(spanEnd[spanCount - 1], spanEnd[a]);
+        } else {
+            spanStart[spanCount] = spanStart[a];
+            spanEnd[spanCount] = spanEnd[a];
+            spanCount++;
+        }
+    }
+
+    float covered = 0.0;
+    for (int a = 0; a < MAX_VIEW_HITS; a++) {
+        if (a >= spanCount) {
+            break;
+        }
+
+        covered += spanEnd[a] - spanStart[a];
+    }
+
+    float tStart = spanStart[0];
+    float tEnd = spanEnd[spanCount - 1];
+
+    vec3 lightDir = LightDirection.xyz;
+    float directStrength = LightDirection.w;
+
+    // SHADOW-ONLY PUFFS: OFF THE VIEW RAY BUT CLOSE ENOUGH TO THE MARCHED PART OF IT THAT A
+    // SHADOW SAMPLE CAN LAND INSIDE THEM. WITHOUT THESE, SHADOWS WOULD DEPEND ON WHICH
+    // PUFFS HAPPEN TO BE IN VIEW AND CHANGE AS THE CAMERA TURNS.
+    hitCount = viewHitCount;
+    if (directStrength > 0.0) {
+        for (int i = 0; i < MAX_PUFFS; i++) {
+            if (i >= puffCount || hitCount >= MAX_HITS) {
+                break;
+            }
+
+            if (isViewHit(viewMask, i)) {
+                continue;
+            }
+
+            vec4 shape = Puffs[i * 2];
+            float reach = shape.w + SHADOW_REACH;
+            vec3 toCenter = shape.xyz - ro;
+            float b = dot(toCenter, rd);
+            float h = b * b - (dot(toCenter, toCenter) - reach * reach);
+            if (h <= 0.0) {
+                continue;
+            }
+
+            h = sqrt(h);
+            if (b + h <= tStart || b - h >= tEnd) {
+                continue;
+            }
+
+            hitList[hitCount++] = i;
+        }
+    }
+
+    // 2. MARCH SETUP. THE STEP BUDGET IS SPREAD OVER THE COVERED LENGTH ONLY, NOT THE GAPS.
     float jitter = interleavedGradientNoise(gl_FragCoord.xy);
-    float span = tEnd - tStart;
     // DISTANT GAS COVERS FEW PIXELS AND DOESN'T NEED FINE STEPS.
     float stepSize = BASE_STEP * clamp(tStart / STEP_LOD_START, 1.0, MAX_STEP_SCALE);
-    int steps = int(clamp(ceil(span / stepSize), 12.0, float(max(Counts.y, 12))));
-    float dt = span / float(steps);
+    int maxSteps = clamp(Counts.y, 12, MAX_VIEW_STEPS);
+    int steps = int(clamp(ceil(covered / stepSize), 12.0, float(maxSteps)));
+    float dt = covered / float(steps);
 
-    vec3 lightDir = normalize(LightDirection.xyz);
+    float time = NoiseOrigin.w;
     float cosTheta = dot(rd, lightDir);
-    float directStrength = LightDirection.w;
-    int shadowSteps = max(Counts.z, 1);
+    int shadowSteps = clamp(Counts.z, 1, MAX_SHADOW_STEPS);
     float firstShadowStep = SHADOW_REACH * (SHADOW_GROWTH - 1.0) / (pow(SHADOW_GROWTH, float(shadowSteps)) - 1.0);
 
     // THE PHASE FUNCTION ONLY DEPENDS ON THE VIEW/LIGHT ANGLE, SO EVALUATE THE
@@ -325,10 +430,22 @@ void main() {
     float weightedDistance = 0.0;
     float weightTotal = 0.0;
 
+    int span = 0;
     float t = tStart + dt * jitter;
-    for (int s = 0; s < 256; s++) {
+    for (int s = 0; s < MAX_VIEW_STEPS; s++) {
         if (s >= steps || transmittance < MIN_TRANSMITTANCE) {
             break;
+        }
+
+        // STEPPING PAST THE END OF A SPAN CARRIES THE REMAINDER INTO THE NEXT ONE, SO SAMPLES
+        // STAY EVENLY SPACED ALONG THE GAS AND THE GAPS BETWEEN SPANS ARE SKIPPED.
+        for (int g = 0; g < MAX_VIEW_HITS; g++) {
+            if (t <= spanEnd[span] || span + 1 >= spanCount) {
+                break;
+            }
+
+            t = spanStart[span + 1] + (t - spanEnd[span]);
+            span++;
         }
 
         vec3 p = ro + rd * t;
@@ -336,8 +453,10 @@ void main() {
         vec2 field = puffField(p, info);
 
         if (field.x > 0.002) {
+            vec3 wp = p + NoiseOrigin.xyz;
+            vec3 warp = warpOffset(wp, time);
             float detailAmount = 1.0 - smoothstep(DETAIL_LOD_START, DETAIL_LOD_END, t);
-            float density = gasDensity(p, field, info.z, detailAmount);
+            float density = gasDensity(wp, warp, time, field, info.z, detailAmount);
 
             if (density > 0.001) {
                 float sigmaT = density * EXTINCTION;
@@ -357,12 +476,12 @@ void main() {
                         cachedOpticalDepth = 0.0;
                         float lightStep = firstShadowStep;
                         float lightT = lightStep * (0.5 + jitter * 0.5);
-                        for (int l = 0; l < 8; l++) {
+                        for (int l = 0; l < MAX_SHADOW_STEPS; l++) {
                             if (l >= shadowSteps) {
                                 break;
                             }
 
-                            cachedOpticalDepth += gasDensityLow(p + lightDir * lightT) * lightStep;
+                            cachedOpticalDepth += shadowDensity(p + lightDir * lightT, warp, time) * lightStep;
                             lightStep *= SHADOW_GROWTH;
                             lightT += lightStep;
                         }

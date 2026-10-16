@@ -19,7 +19,7 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * CONTENTS OF THE SHADERS' {@code FartGasInfo} UNIFORM BLOCK (STD140). THE LAYOUT HERE MUST
- * MATCH THE BLOCK IN {@code fart_gas.vsh} / {@code fart_gas.fsh}.
+ * MATCH THE BLOCK IN {@code shaders/include/fart_gas_common.glsl}.
  *
  * <p>ONLY BUILDS THE BYTES; THE VERSION-SPECIFIC {@code FartGasRenderer} OWNS THE GPU BUFFER.
  */
@@ -27,10 +27,20 @@ public final class FartGasUniforms {
 
     // CAMERA POSITION IS WRAPPED BY THE LCM OF THE SHADER'S NOISE PERIODS (4, 1.5, 0.5 BLOCKS).
     private static final double NOISE_PERIOD = 12.0;
-    private static final double TIME_PERIOD_SECONDS = 2400.0;
+    // EVERY NOISE SCROLL SPEED IN fart_gas.fsh TIMES THIS IS A WHOLE NUMBER, SO THE NOISE
+    // DOESN'T JUMP WHEN TIME WRAPS.
+    private static final double TIME_PERIOD_SECONDS = 2000.0;
 
     private static final Vector3fc GAS_ALBEDO = new Vector3f(0.64F, 0.74F, 0.40F);
     private static final float GAS_DENSITY = 1.6F;
+
+    // PUFFS FAINTER THAN THIS ARE NOT UPLOADED. THE SHADER STOPS COLLECTING PUFFS ALONG A RAY
+    // ONCE ITS HIT LIST IS FULL, SO THE REST ARE UPLOADED DENSEST FIRST.
+    private static final float MIN_VISIBLE_DENSITY = 0.002F;
+
+    // SORTING SCRATCH (RENDER THREAD ONLY).
+    private static final FartGasSimulation.Puff[] SORTED = new FartGasSimulation.Puff[FartGasSimulation.MAX_PUFFS];
+    private static final float[] SORTED_DENSITY = new float[FartGasSimulation.MAX_PUFFS];
 
     /** SIZE OF THE BLOCK IN BYTES. */
     public static final int SIZE;
@@ -53,7 +63,8 @@ public final class FartGasUniforms {
     private FartGasUniforms() {
     }
 
-    public static void write(ByteBuffer data, LevelRenderState levelState, List<FartGasSimulation.Puff> puffs, FartGasSettings.Values quality) {
+    /** RETURNS HOW MANY PUFFS WERE UPLOADED (0 = NOTHING VISIBLE TO DRAW). */
+    public static int write(ByteBuffer data, LevelRenderState levelState, List<FartGasSimulation.Puff> puffs, FartGasSettings.Values quality) {
         CameraRenderState camera = levelState.cameraRenderState;
         SkyRenderState sky = levelState.skyRenderState;
         float partial = levelState.worldPartialTicks;
@@ -74,23 +85,59 @@ public final class FartGasUniforms {
 
         builder.putVec4(GAS_ALBEDO.x(), GAS_ALBEDO.y(), GAS_ALBEDO.z(), GAS_DENSITY);
 
-        int count = Math.min(puffs.size(), FartGasSimulation.MAX_PUFFS);
+        int count = sortVisible(puffs, partial);
         builder.putIVec4(count, quality.maxViewSteps(), quality.shadowSteps(), quality.resolutionDivisor());
 
         for (int i = 0; i < FartGasSimulation.MAX_PUFFS; i++) {
             if (i < count) {
-                FartGasSimulation.Puff puff = puffs.get(i);
+                FartGasSimulation.Puff puff = SORTED[i];
+                float radius = puff.radius(partial);
                 builder.putVec4(
                     (float) (puff.x(partial) - cameraPos.x),
                     (float) (puff.y(partial) - cameraPos.y),
                     (float) (puff.z(partial) - cameraPos.z),
-                    puff.radius(partial));
-                builder.putVec4(puff.density(partial), puff.skyLight(), puff.blockLight(), puff.seed());
+                    radius);
+                builder.putVec4(SORTED_DENSITY[i], puff.skyLight(), puff.blockLight(), 1.0F / (radius * radius));
+                SORTED[i] = null;
             } else {
                 builder.putVec4(0.0F, 0.0F, 0.0F, 0.0F);
                 builder.putVec4(0.0F, 0.0F, 0.0F, 0.0F);
             }
         }
+
+        return count;
+    }
+
+    /** FILLS SORTED / SORTED_DENSITY WITH THE VISIBLE PUFFS, DENSEST FIRST, AND RETURNS HOW MANY. */
+    private static int sortVisible(List<FartGasSimulation.Puff> puffs, float partial) {
+        int count = 0;
+        for (FartGasSimulation.Puff puff : puffs) {
+            float density = puff.density(partial);
+            if (density < MIN_VISIBLE_DENSITY) {
+                continue;
+            }
+
+            // INSERTION SORT (FEW PUFFS). WHEN FULL, THE FAINTEST FALLS OFF THE END.
+            if (count == FartGasSimulation.MAX_PUFFS) {
+                if (density <= SORTED_DENSITY[count - 1]) {
+                    continue;
+                }
+                count--;
+            }
+
+            int j = count;
+            while (j > 0 && SORTED_DENSITY[j - 1] < density) {
+                SORTED[j] = SORTED[j - 1];
+                SORTED_DENSITY[j] = SORTED_DENSITY[j - 1];
+                j--;
+            }
+
+            SORTED[j] = puff;
+            SORTED_DENSITY[j] = density;
+            count++;
+        }
+
+        return count;
     }
 
     /** DIRECTION/COLOR OF THE DOMINANT CELESTIAL LIGHT AND THE SKY AMBIENT COLOR. */

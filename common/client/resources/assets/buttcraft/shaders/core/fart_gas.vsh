@@ -2,6 +2,7 @@
 #extension GL_ARB_separate_shader_objects : require
 
 #include <minecraft:projection.glsl>
+#include <buttcraft:fart_gas_common.glsl>
 
 // SCREEN-SPACE QUAD (NO VERTEX BUFFER) COVERING ONLY THE PROJECTED BOUNDS OF THE
 // PUFFS, SO PIXELS THAT CANNOT SEE ANY GAS NEVER RUN THE RAY MARCHER. IT ALSO
@@ -11,25 +12,11 @@
 //
 // THE BASE TERM IS LINEAR IN SCREEN SPACE, SO IT INTERPOLATES EXACTLY. THIS
 // STAYS CORRECT WHEN VANILLA FOLDS VIEW BOBBING (A TRANSLATION + ROTATION) INTO
-// THE PROJECTION MATRIX, WHERE THE EYE IS NO LONGER AT THE ORIGIN.
+// THE PROJECTION MATRIX, WHERE THE EYE IS NO LONGER AT THE ORIGIN. THAT IS ALSO WHY
+// THE BOUNDS ARE COMPUTED HERE RATHER THAN ON THE CPU: ONLY THE GPU SEES THAT MATRIX.
 
-#define MAX_PUFFS 64
-
-// MUST MATCH THE BLOCK IN fart_gas.fsh.
-layout(std140) uniform FartGasInfo {
-    mat4 ViewToWorld;
-    vec4 NoiseOrigin;
-    vec4 LightDirection;
-    vec4 LightColor;
-    vec4 AmbientColor;
-    vec4 GasColor;
-    ivec4 Counts;
-    vec4 Puffs[MAX_PUFFS * 2];
-};
-
-layout(location = 0) out vec2 texCoord;
-layout(location = 1) out vec4 unprojectBase;
-layout(location = 2) out vec4 unprojectDepth;
+layout(location = 0) out vec4 unprojectBase;
+layout(location = 1) out vec4 unprojectDepth;
 
 const vec2 CORNERS[6] = vec2[](
     vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),
@@ -93,7 +80,6 @@ void main() {
     }
 
     gl_Position = vec4(ndc, 0.0, 1.0);
-    texCoord = ndc * 0.5 + 0.5;
 
     mat4 inverseProjection = inverse(ProjMat);
     unprojectBase = inverseProjection * vec4(ndc, 0.0, 1.0);
