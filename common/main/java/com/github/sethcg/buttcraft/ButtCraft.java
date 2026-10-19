@@ -1,12 +1,12 @@
 package com.github.sethcg.buttcraft;
 
-import com.github.sethcg.buttcraft.networking.FartBurstPayload;
 import com.github.sethcg.buttcraft.networking.FartPayload;
 import com.github.sethcg.buttcraft.networking.FartRequestPayload;
 
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
+import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.networking.v1.PlayerLookup;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 
 import net.minecraft.resources.Identifier;
@@ -17,10 +17,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.UUID;
 
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -34,8 +31,8 @@ public class ButtCraft implements ModInitializer {
     // FART COOLDOWN (AVOID SPAMMING, 20 TICKS = 1 SECOND)
     private static final int FART_COOLDOWN_TICKS = 20;
 
-    // TRACK WHEN EACH PLAYER CAN FART AGAIN
-    private static final Map<UUID, Long> FART_COOLDOWNS = new HashMap<>();
+    // GAME TIME WHEN EACH PLAYER CAN FART AGAIN. NOT SAVED: IT GOES AWAY WITH THE PLAYER ENTITY.
+    private static final AttachmentType<Long> NEXT_FART = AttachmentRegistry.create(id("next_fart"));
 
     // FART VISIBILITY / SOUND
     private static final double FART_SOUND_RADIUS = 32.0;
@@ -77,31 +74,19 @@ public class ButtCraft implements ModInitializer {
             }
         );
 
-        // REMOVE PLAYER'S FART COOLDOWN WHEN THEY DISCONNECT
-        ServerPlayConnectionEvents.DISCONNECT.register(
-            (handler, server) -> {
-                FART_COOLDOWNS.remove(handler.getPlayer().getUUID());
-            }
-        );
-
         LOGGER.info("BUTTCRAFT INITIALIZED.");
     }
 
     private static void tryFart(ServerPlayer player) {
         long currentTick = player.level().getGameTime();
-        UUID playerId = player.getUUID();
-        Long nextAllowedTick = FART_COOLDOWNS.get(playerId);
 
         // PLAYER IS STILL ON COOLDOWN
-        if (nextAllowedTick != null && currentTick < nextAllowedTick) {
+        if (currentTick < player.getAttachedOrElse(NEXT_FART, 0L)) {
             return;
         }
 
         // SET NEXT AVAILABLE FART TIME
-        FART_COOLDOWNS.put(
-            playerId,
-            currentTick + FART_COOLDOWN_TICKS
-        );
+        player.setAttached(NEXT_FART, currentTick + FART_COOLDOWN_TICKS);
 
         // ACTUALLY FART
         fart(player);
@@ -118,11 +103,7 @@ public class ButtCraft implements ModInitializer {
 
         // SEND THE PLAYER'S REAL SERVER-SIDE POSITION TO NEARBY CLIENTS
         Vec3 pos = player.position();
-        FartPayload fart = new FartPayload(pos, player.getYRot());
-
-        for (ServerPlayer other : PlayerLookup.around(level, pos, FART_SOUND_RADIUS)) {
-            ServerPlayNetworking.send(other, fart);
-        }
+        broadcast(level, pos, FartPayload.fart(pos, player.getYRot()));
     }
 
     /**
@@ -143,11 +124,13 @@ public class ButtCraft implements ModInitializer {
         // LEAVE A STINKY CLOUD WHERE THE GAS WILL BE
         FartClouds.spawnBurst(level, pos, owner, lifetimeTicks, size, stenchTicks);
 
-        // CREATE THE PAYLOAD THAT WILL BE SENT TO NEARBY CLIENTS
-        FartBurstPayload burst = new FartBurstPayload(pos, lifetimeTicks, size);
+        broadcast(level, pos, FartPayload.burst(pos, lifetimeTicks, size));
+    }
 
+    // EVERY PLAYER WITHIN EARSHOT HEARS AND SEES THE FART
+    private static void broadcast(ServerLevel level, Vec3 pos, FartPayload fart) {
         for (ServerPlayer other : PlayerLookup.around(level, pos, FART_SOUND_RADIUS)) {
-            ServerPlayNetworking.send(other, burst);
+            ServerPlayNetworking.send(other, fart);
         }
     }
 

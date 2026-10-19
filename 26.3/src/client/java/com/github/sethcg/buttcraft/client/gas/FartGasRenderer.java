@@ -31,6 +31,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.client.renderer.MappableRingBuffer;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.resources.Identifier;
 
 /**
@@ -61,6 +62,10 @@ public final class FartGasRenderer {
     // 64 SLICES OF 64x64 WITH A 1px WRAPPED GUTTER, IN AN 8x8 GRID (528x528 RGBA).
     //   R = PERLIN-WORLEY, G = WORLEY FBM (LOW), B = WORLEY FBM (HIGH), A = PERLIN FBM
     private static final Identifier NOISE_TEXTURE = ButtCraft.id("textures/fart_gas_noise.png");
+
+    // THE SAME VOLUME WITH THE SHADER'S SHAPE/DETAIL CHANNEL BLENDS PRE-BAKED FOR TWO
+    // NEIGHBOURING SLICES, SO EACH OF THOSE LOOKUPS IS ONE FETCH.
+    private static final Identifier SHAPE_TEXTURE = ButtCraft.id("textures/fart_gas_shape.png");
 
     // THE MARCH INTO THE CLEARED REDUCED-RESOLUTION TARGET (NO BLENDING)...
     public static final RenderPipeline PIPELINE = marchPipeline("pipeline/fart_gas", Optional.empty());
@@ -121,7 +126,9 @@ public final class FartGasRenderer {
             return;
         }
 
-        GpuTextureView noise = Minecraft.getInstance().getTextureManager().getTexture(NOISE_TEXTURE).getTextureView();
+        TextureManager textures = Minecraft.getInstance().getTextureManager();
+        GpuTextureView noise = textures.getTexture(NOISE_TEXTURE).getTextureView();
+        GpuTextureView shape = textures.getTexture(SHAPE_TEXTURE).getTextureView();
 
         // THE PIPELINE READS THE LEVEL PROJECTION AND FOG BUFFERS SET UP BY VANILLA.
         if (RenderSystem.getProjectionMatrixBuffer() == null || RenderSystem.getShaderFog() == null) {
@@ -176,6 +183,7 @@ public final class FartGasRenderer {
             pass.setPipeline(direct ? directPipeline : pipeline);
             pass.setUniform("FartGasInfo", buffer);
             pass.setUniform("NoiseSampler", noise, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
+            pass.setUniform("ShapeSampler", shape, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
             pass.setUniform("DepthSampler", depthView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
             pass.draw(6, 1, 0, 0);
         }
@@ -207,6 +215,7 @@ public final class FartGasRenderer {
                 .withBindGroupLayout(BindGroupLayout.builder()
                     .withUniform("FartGasInfo", UniformType.UNIFORM_BUFFER)
                     .withUniform("NoiseSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+                    .withUniform("ShapeSampler", UniformType.COMBINED_IMAGE_SAMPLER)
                     .withUniform("DepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
                     .build())
                 .withColorTargetState(new ColorTargetState(

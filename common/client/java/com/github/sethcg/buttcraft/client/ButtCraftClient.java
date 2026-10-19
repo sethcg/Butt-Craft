@@ -3,7 +3,6 @@ package com.github.sethcg.buttcraft.client;
 import com.github.sethcg.buttcraft.ButtCraft;
 import com.github.sethcg.buttcraft.ModSounds;
 import com.github.sethcg.buttcraft.client.gas.FartGas;
-import com.github.sethcg.buttcraft.networking.FartBurstPayload;
 import com.github.sethcg.buttcraft.networking.FartPayload;
 import com.github.sethcg.buttcraft.networking.FartRequestPayload;
 
@@ -37,7 +36,8 @@ public class ButtCraftClient implements ClientModInitializer {
             }
         });
 
-        // RECEIVE FARTS FROM THE SERVER (HANDLERS RUN ON THE RENDER THREAD)
+        // RECEIVE FARTS FROM THE SERVER (HANDLERS RUN ON THE RENDER THREAD): A PLAYER'S, OR
+        // ONE THAT BURSTS OUT AROUND A POINT (E.G. A SPLASH POTION)
         ClientPlayNetworking.registerGlobalReceiver(
                 FartPayload.TYPE,
                 (payload, context) -> {
@@ -46,19 +46,11 @@ public class ButtCraftClient implements ClientModInitializer {
                         return;
 
                     playFart(client);
-                    FartGas.emit(payload.pos(), payload.yaw());
-                });
-
-        // RECEIVE FARTS THAT BURST OUT AROUND A POINT (E.G. A SPLASH POTION)
-        ClientPlayNetworking.registerGlobalReceiver(
-                FartBurstPayload.TYPE,
-                (payload, context) -> {
-                    Minecraft client = context.client();
-                    if (client.level == null)
-                        return;
-
-                    playFart(client);
-                    FartGas.emitBurst(payload.pos(), payload.lifetimeTicks(), payload.size());
+                    if (payload.burst()) {
+                        FartGas.emitBurst(payload.pos(), payload.lifetimeTicks(), payload.size());
+                    } else {
+                        FartGas.emit(payload.pos(), payload.yaw());
+                    }
                 });
     }
 

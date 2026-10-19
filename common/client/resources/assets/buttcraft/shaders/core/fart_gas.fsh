@@ -34,6 +34,7 @@
 #define MAX_HITS 32
 
 uniform sampler2D NoiseSampler;
+uniform sampler2D ShapeSampler;
 uniform sampler2D DepthSampler;
 
 layout(location = 0) in vec4 unprojectBase;
@@ -50,6 +51,11 @@ layout(location = 0) out vec4 fragColor;
 //   G = WORLEY FBM, LOW FREQUENCY
 //   B = WORLEY FBM, HIGH FREQUENCY
 //   A = PERLIN FBM (USED FOR DOMAIN WARPING)
+//
+// ShapeSampler IS THE SAME ATLAS WITH THE CHANNEL BLENDS PRE-BAKED,
+// EACH FOR THIS SLICE AND THE NEXT, SO ONE FETCH GIVES A Z-INTERPOLATED VALUE:
+//   R / G = SHAPE  (PERLIN-WORLEY 0.55 + WORLEY LOW 0.3 + WORLEY HIGH 0.15) AT Z / Z + 1
+//   B / A = DETAIL (WORLEY LOW 0.6 + WORLEY HIGH 0.4) AT Z / Z + 1
 // -----------------------------------------------------------------------------
 const float NOISE_SIZE = 64.0;
 const float NOISE_TILE = 66.0;
@@ -103,6 +109,16 @@ vec4 noise3(vec3 p) {
     vec4 a = texture(NoiseSampler, atlasTile(s0) + inTile);
     vec4 b = texture(NoiseSampler, atlasTile(s1) + inTile);
     return mix(a, b, f);
+}
+
+// ONE FETCH OF THE BAKED ATLAS. X = SHAPE, Y = DETAIL (ONLY ONE IS USED PER CALL).
+vec2 shapeDetail3(vec3 p) {
+    p = fract(p);
+    float z = p.z * NOISE_SIZE - 0.5;
+    float zi = floor(z);
+    vec2 inTile = (1.0 + p.xy * NOISE_SIZE) / NOISE_ATLAS;
+    vec4 n = texture(ShapeSampler, atlasTile(mod(zi + NOISE_SIZE, NOISE_SIZE)) + inTile);
+    return mix(n.rb, n.ga, z - zi);
 }
 
 float remap(float v, float lo, float hi) {
@@ -215,8 +231,7 @@ vec3 warpOffset(vec3 wp, float time) {
 // BASE SHAPE: ERODE THE SMOOTH FIELD WITH LOW-FREQUENCY PERLIN-WORLEY. EVEN FULLY
 // COVERED REGIONS KEEP SOME EROSION SO THE CORE NEVER LOOKS LIKE SMOOTH FOG.
 float baseShape(vec3 wp, vec3 warp, float coverage, float time) {
-    vec4 shapeNoise = noise3((wp + warp) / SHAPE_SCALE + SHAPE_SCROLL * time);
-    float shape = shapeNoise.r * 0.55 + shapeNoise.g * 0.3 + shapeNoise.b * 0.15;
+    float shape = shapeDetail3((wp + warp) / SHAPE_SCALE + SHAPE_SCROLL * time).x;
     return remap(shape, 1.0 - coverage * 0.74, 1.0) * coverage;
 }
 
@@ -230,8 +245,7 @@ float gasDensity(vec3 wp, vec3 warp, float time, vec2 field, float height, float
 
     if (detailAmount > 0.0) {
         // DETAIL EROSION: BILLOWY ON TOP, WISPY UNDERNEATH, STRONGEST AT THE EDGES.
-        vec4 detailNoise = noise3((wp + warp * 0.55) / DETAIL_SCALE + DETAIL_SCROLL * time);
-        float detail = detailNoise.g * 0.6 + detailNoise.b * 0.4;
+        float detail = shapeDetail3((wp + warp * 0.55) / DETAIL_SCALE + DETAIL_SCROLL * time).y;
         detail = mix(1.0 - detail, detail, clamp(height * 1.6, 0.0, 1.0));
         density = mix(density, remap(density, detail * 0.55 * (1.0 - density * 0.45), 1.0), detailAmount);
     }

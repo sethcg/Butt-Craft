@@ -1,5 +1,7 @@
 package com.github.sethcg.buttcraft;
 
+import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
+import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 
@@ -20,9 +22,7 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import org.jspecify.annotations.Nullable;
@@ -71,8 +71,9 @@ public final class FartClouds {
 
     private static final List<Cloud> CLOUDS = new ArrayList<>();
 
-    // TRACK WHEN EACH ENTITY CAN BE DOSED AGAIN (SHARED BY ALL CLOUDS, SO THEY DON'T STACK)
-    private static final Map<UUID, Long> NEXT_DOSES = new HashMap<>();
+    // GAME TIME WHEN EACH ENTITY CAN BE DOSED AGAIN (SHARED BY ALL CLOUDS, SO THEY DON'T STACK).
+    // NOT SAVED: IT GOES AWAY WITH THE ENTITY.
+    private static final AttachmentType<Long> NEXT_DOSE = AttachmentRegistry.create(ButtCraft.id("next_fart_dose"));
 
     private FartClouds() {
     }
@@ -80,17 +81,8 @@ public final class FartClouds {
     public static void initialize() {
         ServerTickEvents.END_LEVEL_TICK.register(FartClouds::tick);
 
-        // FORGET DOSE TIMERS THAT HAVE RUN OUT
-        ServerTickEvents.END_SERVER_TICK.register(server -> {
-            long currentTick = server.overworld().getGameTime();
-            NEXT_DOSES.values().removeIf(nextDose -> currentTick >= nextDose);
-        });
-
         // DROP ALL CLOUDS WHEN THE SERVER STOPS (E.G. LEAVING A SINGLEPLAYER WORLD)
-        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
-            CLOUDS.clear();
-            NEXT_DOSES.clear();
-        });
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> CLOUDS.clear());
     }
 
     public static void spawn(ServerLevel level, ServerPlayer owner) {
@@ -202,8 +194,7 @@ public final class FartClouds {
 
             for (LivingEntity entity : entities) {
                 // ENTITY WAS DOSED RECENTLY
-                Long nextDose = NEXT_DOSES.get(entity.getUUID());
-                if (nextDose != null && currentTick < nextDose) {
+                if (currentTick < entity.getAttachedOrElse(NEXT_DOSE, 0L)) {
                     continue;
                 }
 
@@ -222,7 +213,7 @@ public final class FartClouds {
                     continue;
                 }
 
-                NEXT_DOSES.put(entity.getUUID(), currentTick + DOSE_INTERVAL_TICKS);
+                entity.setAttached(NEXT_DOSE, currentTick + DOSE_INTERVAL_TICKS);
                 entity.addEffect(stench, owner);
                 entity.hurtServer(level, FartGasDamageSource.create(gasDamage, owner), GAS_DAMAGE);
             }

@@ -1,6 +1,5 @@
 package com.github.sethcg.buttcraft;
 
-import com.github.sethcg.buttcraft.networking.FartBurstPayload;
 import com.github.sethcg.buttcraft.networking.FartPayload;
 import com.github.sethcg.buttcraft.networking.FartRequestPayload;
 
@@ -20,11 +19,6 @@ public final class Networking {
         PayloadTypeRegistry.clientboundPlay().register(
             FartPayload.TYPE,
             FartPayload.CODEC
-        );
-
-        PayloadTypeRegistry.clientboundPlay().register(
-            FartBurstPayload.TYPE,
-            FartBurstPayload.CODEC
         );
     }
 }

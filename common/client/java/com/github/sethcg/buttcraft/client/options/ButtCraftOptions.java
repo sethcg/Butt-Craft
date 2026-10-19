@@ -47,7 +47,7 @@ public final class ButtCraftOptions {
             "options.buttcraft.gas_quality",
             OptionInstance.cachedConstantTooltip(Component.translatable("options.buttcraft.gas_quality.tooltip")),
             (caption, quality) -> Component.translatable(quality.translationKey()),
-            new OptionInstance.Enum<>(List.copyOf(Arrays.asList(FartGasQuality.values())), QUALITY_CODEC),
+            new OptionInstance.Enum<>(List.of(FartGasQuality.values()), QUALITY_CODEC),
             FartGasSettings.preset(),
             this::applyPreset);
 
