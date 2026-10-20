@@ -199,4 +199,12 @@ public class ButtCraft implements ModInitializer {
     public static Identifier id(String path) {
         return Identifier.fromNamespaceAndPath(MOD_ID, path);
     }
+
+    /**
+     * A LOGGER FOR ONE PART OF THE MOD, NAMED buttcraft/subsystem (E.G. buttcraft/gas), SO ITS
+     * LINES SAY WHERE THEY CAME FROM AND A LOG4J CONFIG CAN CHANGE ITS LEVEL ON ITS OWN.
+     */
+    public static Logger logger(String subsystem) {
+        return LoggerFactory.getLogger(MOD_ID + "/" + subsystem);
+    }
 }

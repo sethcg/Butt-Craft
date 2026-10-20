@@ -6,6 +6,7 @@ import java.util.Optional;
 import org.joml.Vector4f;
 import org.joml.Vector4fc;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
 
 import com.github.sethcg.buttcraft.ButtCraft;
 import com.mojang.blaze3d.pipeline.RenderTarget;
@@ -58,6 +59,8 @@ import net.minecraft.resources.Identifier;
  */
 public final class FartGasRenderer {
 
+    private static final Logger LOGGER = ButtCraft.logger("gas");
+
     // PRE-BAKED, SEAMLESSLY TILING 64x64x64 NOISE VOLUME STORED AS A 2D ATLAS:
     // 64 SLICES OF 64x64 WITH A 1px WRAPPED GUTTER, IN AN 8x8 GRID (528x528 RGBA).
     //   R = PERLIN-WORLEY, G = WORLEY FBM (LOW), B = WORLEY FBM (HIGH), A = PERLIN FBM
@@ -100,6 +103,7 @@ public final class FartGasRenderer {
     private @Nullable MappableRingBuffer ubo;
     private @Nullable TextureTarget gasTarget;
     private boolean warnedMissingPipeline;
+    private boolean warnedMissingTarget;
 
     public FartGasRenderer(FartGasSimulation simulation) {
         this.simulation = simulation;
@@ -121,7 +125,9 @@ public final class FartGasRenderer {
         if (pipeline == null || compositePipeline == null || directPipeline == null) {
             if (!this.warnedMissingPipeline) {
                 this.warnedMissingPipeline = true;
-                ButtCraft.LOGGER.warn("FART GAS PIPELINE IS NOT AVAILABLE (SHADER FAILED TO COMPILE?). GAS WILL NOT RENDER.");
+                // VANILLA ALREADY LOGGED THE COMPILE ERROR ITSELF WHEN THE RESOURCES LOADED.
+                RenderPipeline missing = pipeline == null ? PIPELINE : compositePipeline == null ? COMPOSITE_PIPELINE : DIRECT_PIPELINE;
+                LOGGER.warn("PIPELINE {} UNAVAILABLE, GAS WILL NOT RENDER.", missing.getLocation());
             }
             return;
         }
@@ -139,6 +145,11 @@ public final class FartGasRenderer {
         GpuTextureView colorView = mainTarget.getColorTextureView();
         GpuTextureView depthView = mainTarget.getDepthTextureView();
         if (colorView == null || depthView == null) {
+            // MOST LIKELY A SHADER MOD REPLACING THE MAIN TARGET. WITHOUT THIS THE GAS JUST VANISHES.
+            if (!this.warnedMissingTarget) {
+                this.warnedMissingTarget = true;
+                LOGGER.warn("MAIN TARGET HAS NO {} VIEW, GAS WILL NOT RENDER.", colorView == null ? "COLOR" : "DEPTH");
+            }
             return;
         }
 

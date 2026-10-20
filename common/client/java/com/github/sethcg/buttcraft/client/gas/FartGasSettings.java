@@ -8,6 +8,8 @@ import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Properties;
 
+import org.slf4j.Logger;
+
 import com.github.sethcg.buttcraft.ButtCraft;
 
 import net.fabricmc.loader.api.FabricLoader;
@@ -26,6 +28,8 @@ import net.minecraft.util.Mth;
  * </ul>
  */
 public final class FartGasSettings {
+
+    private static final Logger LOGGER = ButtCraft.logger("gas");
 
     public static final int[] RESOLUTION_DIVISORS = { 1, 2, 4 };
     public static final int MIN_VIEW_STEPS = 16;
@@ -89,7 +93,7 @@ public final class FartGasSettings {
 
         current = values;
         save(values);
-        ButtCraft.LOGGER.info("FART GAS SETTINGS: {} ({}).", values, preset());
+        LOGGER.info("FART GAS SETTINGS: {} ({}).", values, preset());
     }
 
     /**
@@ -108,7 +112,7 @@ public final class FartGasSettings {
         try (Reader reader = Files.newBufferedReader(path)) {
             properties.load(reader);
         } catch (IOException e) {
-            ButtCraft.LOGGER.warn("COULD NOT READ {}, USING DEFAULT GAS SETTINGS.", path, e);
+            LOGGER.warn("CAN'T READ {}, USING DEFAULTS.", path, e);
             current = FartGasQuality.DEFAULT.values;
             return;
         }
@@ -140,7 +144,7 @@ public final class FartGasSettings {
         try {
             return Integer.parseInt(value.trim());
         } catch (NumberFormatException e) {
-            ButtCraft.LOGGER.warn("BAD {} '{}' IN {}, USING {}.", key, value, FILE_NAME, fallback);
+            LOGGER.warn("BAD SETTING FORMAT: {}={} IN {}, USING {}.", key, value, FILE_NAME, fallback);
             return fallback;
         }
     }
@@ -159,7 +163,7 @@ public final class FartGasSettings {
                 properties.store(writer, "ButtCraft gas settings (also in Video Settings)");
             }
         } catch (IOException e) {
-            ButtCraft.LOGGER.warn("COULD NOT WRITE {}.", path, e);
+            LOGGER.warn("CAN'T SAVE {}, CHANGES LAST UNTIL RESTART.", path, e);
         }
     }
 

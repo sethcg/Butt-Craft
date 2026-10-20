@@ -72,8 +72,6 @@ public final class FartPotions {
     }
 
     public static void initialize() {
-        ButtCraftPotionAddon.LOGGER.info("REGISTERING BUTTCRAFT POTIONS");
-
         // THERE ARE NO ARROWS OF FARTS, BUT VANILLA LISTS A TIPPED ARROW FOR EVERY POTION
         CreativeModeTabEvents.modifyOutputEvent(CreativeModeTabs.COMBAT).register(output -> {
             output.getDisplayStacks().removeIf(FartPotions::isFartArrow);

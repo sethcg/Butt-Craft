@@ -1,6 +1,5 @@
 package com.github.sethcg.buttcraft.client;
 
-import com.github.sethcg.buttcraft.ButtCraft;
 import com.github.sethcg.buttcraft.ModSounds;
 import com.github.sethcg.buttcraft.client.gas.FartGas;
 import com.github.sethcg.buttcraft.networking.FartPayload;
@@ -19,9 +18,9 @@ public class ButtCraftClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        ButtCraft.LOGGER.info("BUTTCRAFT CLIENT INITIALIZED.");
 
         KeyBindings.initialize();
+
         FartGas.initialize();
 
         // CHECK FOR THE FART KEY EVERY CLIENT TICK

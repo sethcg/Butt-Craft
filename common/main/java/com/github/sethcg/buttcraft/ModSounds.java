@@ -14,7 +14,7 @@ public final class ModSounds {
     private ModSounds() {
     }
 
+    /** LOADS THIS CLASS, WHICH REGISTERS THE SOUNDS. */
     public static void initialize() {
-        ButtCraft.LOGGER.info("REGISTERING BUTTCRAFT SOUNDS");
     }
 }

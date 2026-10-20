@@ -5,6 +5,7 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
@@ -26,6 +27,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
 
 /**
  * SERVER-SIDE STENCH AREA FOR EACH FART.
@@ -69,7 +71,16 @@ public final class FartClouds {
     // KEEP THE CENTER THIS FAR OFF A WALL THE JET RUNS INTO
     private static final double WALL_MARGIN = 0.1;
 
+    // EACH CLOUD SEARCHES FOR ENTITIES EVERY TICK, SO THIS MANY AT ONCE (E.G. A DISPENSER FARM
+    // THROWING SPLASH FARTS) IS WORTH POINTING OUT WHEN SOMEONE HUNTS FOR LAG.
+    private static final int MANY_CLOUDS = 256;
+
+    private static final Logger LOGGER = ButtCraft.logger("clouds");
+
     private static final List<Cloud> CLOUDS = new ArrayList<>();
+
+    // WARN ONCE EACH TIME THE COUNT CLIMBS PAST MANY_CLOUDS
+    private static boolean warnedManyClouds;
 
     // GAME TIME WHEN EACH ENTITY CAN BE DOSED AGAIN (SHARED BY ALL CLOUDS, SO THEY DON'T STACK).
     // NOT SAVED: IT GOES AWAY WITH THE ENTITY.
@@ -82,7 +93,10 @@ public final class FartClouds {
         ServerTickEvents.END_LEVEL_TICK.register(FartClouds::tick);
 
         // DROP ALL CLOUDS WHEN THE SERVER STOPS (E.G. LEAVING A SINGLEPLAYER WORLD)
-        ServerLifecycleEvents.SERVER_STOPPED.register(server -> CLOUDS.clear());
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            CLOUDS.clear();
+            warnedManyClouds = false;
+        });
     }
 
     public static void spawn(ServerLevel level, ServerPlayer owner) {
@@ -97,7 +111,7 @@ public final class FartClouds {
             maxOffset = Math.max(0.0, wall.getLocation().distanceTo(origin) - WALL_MARGIN);
         }
 
-        CLOUDS.add(new Cloud(
+        add(new Cloud(
             level.dimension(),
             owner.getUUID(),
             OWNER_GRACE_TICKS,
@@ -123,7 +137,7 @@ public final class FartClouds {
         float size,
         int stenchTicks
     ) {
-        CLOUDS.add(new Cloud(
+        add(new Cloud(
             level.dimension(),
             owner == null ? null : owner.getUUID(),
             0,
@@ -134,6 +148,19 @@ public final class FartClouds {
             0.0,
             BURST_SPREAD * size
         ));
+    }
+
+    private static void add(Cloud cloud) {
+        CLOUDS.add(cloud);
+        if (CLOUDS.size() <= MANY_CLOUDS) {
+            warnedManyClouds = false;
+        } else if (!warnedManyClouds) {
+            warnedManyClouds = true;
+            LOGGER.warn(
+                "{} ACTIVE FART CLOUDS, POSSIBLE LAG SOURCE.",
+                CLOUDS.size(), cloud.dimension.identifier(), BlockPos.containing(cloud.origin).toShortString()
+            );
+        }
     }
 
     /** TRUE IF ANY POISONOUS CLOUD IN THE LEVEL TOUCHES THE BOX. */

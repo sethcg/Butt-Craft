@@ -1,6 +1,7 @@
 package com.github.sethcg.buttcraft.client.gas;
 
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
 
 import com.github.sethcg.buttcraft.ButtCraft;
 
@@ -18,6 +19,8 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class FartGas {
 
+    private static final Logger LOGGER = ButtCraft.logger("gas");
+
     private static final FartGasSimulation SIMULATION = new FartGasSimulation();
     private static final FartGasRenderer RENDERER = new FartGasRenderer(SIMULATION);
     private static @Nullable ClientLevel lastLevel;
@@ -27,7 +30,7 @@ public final class FartGas {
 
     public static void initialize() {
         FartGasSettings.load();
-        ButtCraft.LOGGER.info("FART GAS SETTINGS: {} ({}).", FartGasSettings.current(), FartGasSettings.preset());
+        LOGGER.info("FART GAS SETTINGS: {} ({}).", FartGasSettings.current(), FartGasSettings.preset());
 
         FartGasRenderer.initialize();
 
