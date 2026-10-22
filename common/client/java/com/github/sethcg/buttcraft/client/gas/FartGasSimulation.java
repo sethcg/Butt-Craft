@@ -452,6 +452,13 @@ public final class FartGasSimulation {
         double lx = x - this.mutablePos.getX();
         double ly = y - this.mutablePos.getY();
         double lz = z - this.mutablePos.getZ();
+
+        // CHEAP REJECT (E.G. ABOVE A SLAB) BEFORE toAabbs() BUILDS A LIST OF BOXES.
+        AABB bounds = shape.bounds();
+        if (lx < bounds.minX || lx > bounds.maxX || ly < bounds.minY || ly > bounds.maxY || lz < bounds.minZ || lz > bounds.maxZ) {
+            return false;
+        }
+
         for (AABB box : shape.toAabbs()) {
             if (lx >= box.minX && lx <= box.maxX && ly >= box.minY && ly <= box.maxY && lz >= box.minZ && lz <= box.maxZ) {
                 return true;

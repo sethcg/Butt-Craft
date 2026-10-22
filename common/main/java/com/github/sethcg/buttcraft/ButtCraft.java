@@ -68,7 +68,8 @@ public class ButtCraft implements ModInitializer {
             FartRequestPayload.TYPE,
             (payload, context) -> {
                 ServerPlayer player = context.player();
-                if (!player.isRemoved()) {
+                // DEAD PLAYERS AND SPECTATORS CAN'T FART
+                if (!player.isRemoved() && player.isAlive() && !player.isSpectator()) {
                     tryFart(player);
                 }
             }
@@ -157,12 +158,14 @@ public class ButtCraft implements ModInitializer {
         double backwardZ = -Math.cos(yaw);
 
         for (LivingEntity entity : entities) {
-            // APPLY DAMAGE
-            entity.hurtServer(
+            // APPLY DAMAGE. NO KNOCKBACK IF IT DIDN'T LAND (CREATIVE, HIT COOLDOWN, PVP OFF).
+            if (!entity.hurtServer(
                 level,
                 level.damageSources().playerAttack(player),
                 FART_DAMAGE
-            );
+            )) {
+                continue;
+            }
 
             // CALCULATE HORIZONTAL DIRECTION FROM THE PLAYER TO THE ENTITY
             double dx = entity.getX() - player.getX();

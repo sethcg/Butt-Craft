@@ -74,6 +74,10 @@ const vec3 WARP_SCROLL = vec3(0.0, -0.0045, 0.002);
 const vec3 SHAPE_SCROLL = vec3(0.003, 0.011, -0.004);
 const vec3 DETAIL_SCROLL = vec3(-0.012, 0.035, 0.009);
 
+// THE WARP CHANGES OVER WARP_SCALE, SO VIEW SAMPLES REUSE IT FOR THIS FAR (BLOCKS) ALONG
+// THE RAY. NEAR GAS (0.05 STEPS) FETCHES IT ON ABOUT EVERY THIRD SAMPLE.
+const float WARP_REUSE = 0.15;
+
 // DISTANCE LOD (BLOCKS): VIEW STEPS GROW PAST STEP_LOD_START, AND THE DETAIL
 // OCTAVE FADES OUT BETWEEN DETAIL_LOD_START AND DETAIL_LOD_END.
 const float BASE_STEP = 0.05;
@@ -439,6 +443,9 @@ void main() {
     float cachedOpticalDepth = 0.0;
     int litSamples = 0;
 
+    vec3 warp = vec3(0.0);
+    float warpT = -1e9;
+
     float transmittance = 1.0;
     vec3 radiance = vec3(0.0);
     float weightedDistance = 0.0;
@@ -468,7 +475,10 @@ void main() {
 
         if (field.x > 0.002) {
             vec3 wp = p + NoiseOrigin.xyz;
-            vec3 warp = warpOffset(wp, time);
+            if (t - warpT >= WARP_REUSE) {
+                warp = warpOffset(wp, time);
+                warpT = t;
+            }
             float detailAmount = 1.0 - smoothstep(DETAIL_LOD_START, DETAIL_LOD_END, t);
             float density = gasDensity(wp, warp, time, field, info.z, detailAmount);
 

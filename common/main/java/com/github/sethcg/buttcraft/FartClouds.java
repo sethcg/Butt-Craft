@@ -5,7 +5,6 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
@@ -156,10 +155,7 @@ public final class FartClouds {
             warnedManyClouds = false;
         } else if (!warnedManyClouds) {
             warnedManyClouds = true;
-            LOGGER.warn(
-                "{} ACTIVE FART CLOUDS, POSSIBLE LAG SOURCE.",
-                CLOUDS.size(), cloud.dimension.identifier(), BlockPos.containing(cloud.origin).toShortString()
-            );
+            LOGGER.warn("{} ACTIVE FART CLOUDS, POSSIBLE LAG SOURCE.", CLOUDS.size());
         }
     }
 
@@ -226,12 +222,16 @@ public final class FartClouds {
                 }
 
                 // POISON-IMMUNE MOBS (UNDEAD) DON'T MIND THE GAS
+                if (!ModEffects.canSmell(entity)) {
+                    continue;
+                }
+
                 MobEffectInstance stench = new MobEffectInstance(
                     ModEffects.STENCH,
                     cloud.stenchTicks,
                     STENCH_AMPLIFIER
                 );
-                if (!ModEffects.canSmell(entity) || !entity.canBeAffected(stench)) {
+                if (!entity.canBeAffected(stench)) {
                     continue;
                 }
 
