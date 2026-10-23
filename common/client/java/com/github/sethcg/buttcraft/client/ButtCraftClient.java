@@ -13,6 +13,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.client.resources.sounds.SoundInstance;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.phys.Vec3;
 
 public class ButtCraftClient implements ClientModInitializer {
 
@@ -44,7 +45,7 @@ public class ButtCraftClient implements ClientModInitializer {
                     if (client.level == null)
                         return;
 
-                    playFart(client);
+                    playFart(client, payload.pos());
                     if (payload.burst()) {
                         FartGas.emitBurst(payload.pos(), payload.lifetimeTicks(), payload.size());
                     } else {
@@ -53,9 +54,9 @@ public class ButtCraftClient implements ClientModInitializer {
                 });
     }
 
-    private void playFart(Minecraft client) {
-        // NON-POSITIONAL: THE SERVER ONLY SENDS FARTS TO PLAYERS WITHIN RANGE,
-        // SO EVERYONE WHO RECEIVES ONE HEARS IT AT FULL VOLUME.
+    private void playFart(Minecraft client, Vec3 pos) {
+        // POSITIONAL: FADES OUT LINEARLY OVER THE attenuation_distance IN sounds.json, WHICH
+        // MATCHES THE SERVER'S 32-BLOCK SEND RADIUS.
         SimpleSoundInstance sound = new SimpleSoundInstance(
                 ModSounds.FART.location(),
                 SoundSource.PLAYERS,
@@ -64,11 +65,11 @@ public class ButtCraftClient implements ClientModInitializer {
                 client.level.getRandom(),
                 false,
                 0,
-                SoundInstance.Attenuation.NONE,
-                0.0,
-                0.0,
-                0.0,
-                true);
+                SoundInstance.Attenuation.LINEAR,
+                pos.x,
+                pos.y,
+                pos.z,
+                false);
 
         client.getSoundManager().play(sound);
     }

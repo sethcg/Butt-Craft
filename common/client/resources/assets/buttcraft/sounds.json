@@ -3,63 +3,73 @@
     "sounds": [
       {
         "name": "buttcraft:fart-classic-08",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-classic-09",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-dry-long-05",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-dry-quick-12",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-long-01",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-quick-02",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-quick-03",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-quick-06",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-quick-07",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-quick-11",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-quick-14",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-quick-15",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-wet-long-04",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       },
       {
         "name": "buttcraft:fart-wet-quick-13",
-        "stream": false
-      },
-      {
-        "name": "buttcraft:fart-wet-quick-16",
-        "stream": false
+        "stream": false,
+        "attenuation_distance": 32
       }
     ]
   }
