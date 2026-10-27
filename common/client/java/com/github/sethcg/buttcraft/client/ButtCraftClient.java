@@ -47,9 +47,9 @@ public class ButtCraftClient implements ClientModInitializer {
 
                     playFart(client, payload.pos());
                     if (payload.burst()) {
-                        FartGas.emitBurst(payload.pos(), payload.lifetimeTicks(), payload.size());
+                        FartGas.emitBurst(payload.pos(), payload.lifetimeTicks(), payload.size(), payload.seed());
                     } else {
-                        FartGas.emit(payload.pos(), payload.yaw());
+                        FartGas.emit(payload.pos(), payload.yaw(), payload.seed());
                     }
                 });
     }

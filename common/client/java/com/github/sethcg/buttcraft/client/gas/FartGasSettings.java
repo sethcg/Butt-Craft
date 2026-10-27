@@ -25,6 +25,8 @@ import net.minecraft.util.Mth;
  *   <li>MAX VIEW STEPS / SHADOW STEPS: SAMPLES ALONG THE VIEW RAY AND TOWARD THE LIGHT.</li>
  *   <li>PUFF BUDGET: BEYOND IT, THE MOST-OVERLAPPING PUFFS MERGE INTO BIGGER ONES. EVERY
  *   SAMPLE LOOPS OVER THE PUFFS ON ITS RAY, SO FEWER PUFFS ARE DIRECTLY CHEAPER.</li>
+ *   <li>TEMPORAL SMOOTHING: BLENDS EACH FRAME'S MARCH WITH THE LAST FEW, SO THE SAME STEP
+ *   COUNTS LOOK MUCH LESS GRAINY. COSTS ONE SMALL EXTRA PASS.</li>
  * </ul>
  */
 public final class FartGasSettings {
@@ -46,8 +48,9 @@ public final class FartGasSettings {
     private static final String VIEW_STEPS_KEY = "max_view_steps";
     private static final String SHADOW_STEPS_KEY = "shadow_steps";
     private static final String PUFF_BUDGET_KEY = "puff_budget";
+    private static final String TEMPORAL_SMOOTHING_KEY = "temporal_smoothing";
 
-    public record Values(int resolutionDivisor, int maxViewSteps, int shadowSteps, int puffBudget) {
+    public record Values(int resolutionDivisor, int maxViewSteps, int shadowSteps, int puffBudget, boolean temporalSmoothing) {
         public Values {
             resolutionDivisor = nearestDivisor(resolutionDivisor);
             maxViewSteps = Mth.clamp(maxViewSteps, MIN_VIEW_STEPS, MAX_VIEW_STEPS);
@@ -56,19 +59,23 @@ public final class FartGasSettings {
         }
 
         public Values withResolutionDivisor(int value) {
-            return new Values(value, maxViewSteps, shadowSteps, puffBudget);
+            return new Values(value, maxViewSteps, shadowSteps, puffBudget, temporalSmoothing);
         }
 
         public Values withMaxViewSteps(int value) {
-            return new Values(resolutionDivisor, value, shadowSteps, puffBudget);
+            return new Values(resolutionDivisor, value, shadowSteps, puffBudget, temporalSmoothing);
         }
 
         public Values withShadowSteps(int value) {
-            return new Values(resolutionDivisor, maxViewSteps, value, puffBudget);
+            return new Values(resolutionDivisor, maxViewSteps, value, puffBudget, temporalSmoothing);
         }
 
         public Values withPuffBudget(int value) {
-            return new Values(resolutionDivisor, maxViewSteps, shadowSteps, value);
+            return new Values(resolutionDivisor, maxViewSteps, shadowSteps, value, temporalSmoothing);
+        }
+
+        public Values withTemporalSmoothing(boolean value) {
+            return new Values(resolutionDivisor, maxViewSteps, shadowSteps, puffBudget, value);
         }
     }
 
@@ -132,7 +139,8 @@ public final class FartGasSettings {
             readInt(properties, RESOLUTION_KEY, base.resolutionDivisor()),
             readInt(properties, VIEW_STEPS_KEY, base.maxViewSteps()),
             readInt(properties, SHADOW_STEPS_KEY, base.shadowSteps()),
-            readInt(properties, PUFF_BUDGET_KEY, base.puffBudget()));
+            readInt(properties, PUFF_BUDGET_KEY, base.puffBudget()),
+            readBoolean(properties, TEMPORAL_SMOOTHING_KEY, base.temporalSmoothing()));
     }
 
     private static int readInt(Properties properties, String key, int fallback) {
@@ -149,6 +157,22 @@ public final class FartGasSettings {
         }
     }
 
+    private static boolean readBoolean(Properties properties, String key, boolean fallback) {
+        String value = properties.getProperty(key);
+        if (value == null) {
+            return fallback;
+        }
+
+        // Boolean.parseBoolean WOULD QUIETLY READ A TYPO AS false.
+        String trimmed = value.trim();
+        if (trimmed.equalsIgnoreCase("true") || trimmed.equalsIgnoreCase("false")) {
+            return Boolean.parseBoolean(trimmed);
+        }
+
+        LOGGER.warn("BAD SETTING FORMAT: {}={} IN {}, USING {}.", key, value, FILE_NAME, fallback);
+        return fallback;
+    }
+
     private static void save(Values values) {
         Path path = path();
         Properties properties = new Properties();
@@ -157,6 +181,7 @@ public final class FartGasSettings {
         properties.setProperty(VIEW_STEPS_KEY, Integer.toString(values.maxViewSteps()));
         properties.setProperty(SHADOW_STEPS_KEY, Integer.toString(values.shadowSteps()));
         properties.setProperty(PUFF_BUDGET_KEY, Integer.toString(values.puffBudget()));
+        properties.setProperty(TEMPORAL_SMOOTHING_KEY, Boolean.toString(values.temporalSmoothing()));
         try {
             Files.createDirectories(path.getParent());
             try (Writer writer = Files.newBufferedWriter(path)) {

@@ -7,9 +7,9 @@ import java.util.Locale;
  * SINGLE VALUE AFTERWARDS SHOWS {@link #CUSTOM} UNLESS THE RESULT MATCHES A PRESET AGAIN.
  */
 public enum FartGasQuality {
-    LOW(new FartGasSettings.Values(4, 32, 2, 32)),
-    MEDIUM(new FartGasSettings.Values(2, 48, 3, 48)),
-    HIGH(new FartGasSettings.Values(2, 64, 4, FartGasSimulation.MAX_PUFFS)),
+    LOW(new FartGasSettings.Values(4, 24, 2, 32, true)),
+    MEDIUM(new FartGasSettings.Values(2, 32, 3, 48, true)),
+    HIGH(new FartGasSettings.Values(2, 48, 4, FartGasSimulation.MAX_PUFFS, true)),
     CUSTOM(null);
 
     public static final FartGasQuality DEFAULT = LOW;

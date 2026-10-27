@@ -21,7 +21,7 @@ import net.minecraft.network.chat.Component;
  * NOT {@code options.txt}.
  *
  * <p>BUILT FRESH FOR EACH SCREEN SO THEY ALWAYS START FROM THE SAVED VALUES. PICKING A PRESET
- * MOVES THE FOUR DETAIL OPTIONS; MOVING A DETAIL OPTION SWITCHES THE PRESET TO WHICHEVER ONE
+ * MOVES THE FIVE DETAIL OPTIONS; MOVING A DETAIL OPTION SWITCHES THE PRESET TO WHICHEVER ONE
  * MATCHES (OR CUSTOM), LIKE VANILLA'S GRAPHICS PRESET.
  */
 public final class ButtCraftOptions {
@@ -37,6 +37,7 @@ public final class ButtCraftOptions {
     public final OptionInstance<Integer> viewSteps;
     public final OptionInstance<Integer> shadowSteps;
     public final OptionInstance<Integer> puffBudget;
+    public final OptionInstance<Boolean> smoothing;
 
     private boolean applyingPreset;
 
@@ -70,10 +71,16 @@ public final class ButtCraftOptions {
         this.puffBudget = slider("options.buttcraft.gas_puffs",
             FartGasSettings.MIN_PUFF_BUDGET, FartGasSettings.MAX_PUFF_BUDGET, values.puffBudget(),
             budget -> this.update(v -> v.withPuffBudget(budget)));
+
+        this.smoothing = OptionInstance.createBoolean(
+            "options.buttcraft.gas_smoothing",
+            OptionInstance.cachedConstantTooltip(Component.translatable("options.buttcraft.gas_smoothing.tooltip")),
+            values.temporalSmoothing(),
+            smooth -> this.update(v -> v.withTemporalSmoothing(smooth)));
     }
 
     public List<OptionInstance<?>> details() {
-        return List.of(this.resolution, this.viewSteps, this.shadowSteps, this.puffBudget);
+        return List.of(this.resolution, this.viewSteps, this.shadowSteps, this.puffBudget, this.smoothing);
     }
 
     private static OptionInstance<Integer> slider(String key, int min, int max, int initial,
@@ -101,6 +108,7 @@ public final class ButtCraftOptions {
             sync(screen, this.viewSteps, preset.values.maxViewSteps());
             sync(screen, this.shadowSteps, preset.values.shadowSteps());
             sync(screen, this.puffBudget, preset.values.puffBudget());
+            sync(screen, this.smoothing, preset.values.temporalSmoothing());
         } finally {
             this.applyingPreset = false;
         }

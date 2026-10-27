@@ -104,7 +104,7 @@ public class ButtCraft implements ModInitializer {
 
         // SEND THE PLAYER'S REAL SERVER-SIDE POSITION TO NEARBY CLIENTS
         Vec3 pos = player.position();
-        broadcast(level, pos, FartPayload.fart(pos, player.getYRot()));
+        broadcast(level, pos, FartPayload.fart(pos, player.getYRot(), level.getRandom().nextInt()));
     }
 
     /**
@@ -125,7 +125,7 @@ public class ButtCraft implements ModInitializer {
         // LEAVE A STINKY CLOUD WHERE THE GAS WILL BE
         FartClouds.spawnBurst(level, pos, owner, lifetimeTicks, size, stenchTicks);
 
-        broadcast(level, pos, FartPayload.burst(pos, lifetimeTicks, size));
+        broadcast(level, pos, FartPayload.burst(pos, lifetimeTicks, size, level.getRandom().nextInt()));
     }
 
     // EVERY PLAYER WITHIN EARSHOT HEARS AND SEES THE FART

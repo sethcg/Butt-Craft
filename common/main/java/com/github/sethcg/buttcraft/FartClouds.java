@@ -5,6 +5,7 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
@@ -15,6 +16,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -33,7 +35,8 @@ import org.slf4j.Logger;
  *
  * <p>THE VISIBLE GAS IS SIMULATED PER CLIENT, SO THE SERVER CAN'T SEE IT. INSTEAD EACH
  * FART GETS ONE SPHERE THAT ROUGHLY FOLLOWS THE CLOUD: IT STARTS SMALL BEHIND THE PLAYER,
- * DRIFTS BACKWARD WITH THE JET AND GROWS AS THE GAS SPREADS OUT.
+ * DRIFTS BACKWARD WITH THE JET, GROWS AS THE GAS SPREADS OUT AND IS CARRIED BY THE SAME
+ * {@link FartBreeze} AS THE CLIENTS' GAS.
  */
 public final class FartClouds {
 
@@ -64,8 +67,12 @@ public final class FartClouds {
     private static final double JET_SPREAD = 0.7;
     private static final double JET_TICKS = 8.0;
 
-    // A BURST (E.G. A SPLASH POTION) DOESN'T DRIFT, IT SPREADS OUT EVENLY AS FAR AS THE JET GOES
+    // A BURST (E.G. A SPLASH POTION) HAS NO JET, IT SPREADS OUT EVENLY AS FAR AS THE JET GOES
     private static final double BURST_SPREAD = JET_DISTANCE + JET_SPREAD;
+
+    // HOW MUCH OF ITS BREEZE SPEED THE CLOUD KEEPS EACH TICK, LIKE THE CLIENT PUFFS' AIR DRAG
+    // AT BREEZE SPEEDS. THE CLOUD SETTLES AT ABOUT 0.014 BLOCKS / TICK IN THE OPEN.
+    private static final double BREEZE_DRAG = 0.92;
 
     // KEEP THE CENTER THIS FAR OFF A WALL THE JET RUNS INTO
     private static final double WALL_MARGIN = 0.1;
@@ -194,6 +201,7 @@ public final class FartClouds {
                 continue;
             }
 
+            cloud.drift(level, currentTick);
             Vec3 center = cloud.center();
             double radius = cloud.radius();
             double radiusSquared = radius * radius;
@@ -282,6 +290,12 @@ public final class FartClouds {
         final double spread;
         int age;
 
+        // HOW FAR THE BREEZE HAS CARRIED THE CLOUD, AND HOW FAST IT IS MOVING IT NOW
+        double driftX;
+        double driftZ;
+        double driftSpeedX;
+        double driftSpeedZ;
+
         Cloud(
             ResourceKey<Level> dimension,
             @Nullable UUID owner,
@@ -309,10 +323,44 @@ public final class FartClouds {
             return 1.0 - Math.exp(-this.age / JET_TICKS);
         }
 
-        // THE JET CARRIES THE GAS BACKWARD (A BURST HAS NO DIRECTION, SO IT STAYS PUT)
+        // THE JET CARRIES THE GAS BACKWARD (A BURST HAS NO DIRECTION), THEN THE BREEZE TAKES IT
         Vec3 center() {
             double offset = Math.min(ORIGIN_BEHIND + JET_DISTANCE * this.jet(), this.maxOffset);
-            return this.origin.add(this.backward.scale(offset));
+            return this.origin.add(
+                this.backward.x * offset + this.driftX,
+                0.0,
+                this.backward.z * offset + this.driftZ
+            );
+        }
+
+        // OUTDOORS THE BREEZE PUSHES THE CLOUD ALONG, UNTIL A WALL STOPS IT
+        void drift(ServerLevel level, long gameTime) {
+            Vec3 center = this.center();
+            double exposure = FartBreeze.exposure(
+                level.dimensionType().hasSkyLight(),
+                level.getBrightness(LightLayer.SKY, BlockPos.containing(center)) / 15.0
+            );
+            this.driftSpeedX = this.driftSpeedX * BREEZE_DRAG + FartBreeze.x(gameTime) * exposure;
+            this.driftSpeedZ = this.driftSpeedZ * BREEZE_DRAG + FartBreeze.z(gameTime) * exposure;
+
+            double x = center.x + this.driftSpeedX;
+            if (isFullBlock(level, x, center.y, center.z)) {
+                this.driftSpeedX = 0.0;
+                x = center.x;
+            } else {
+                this.driftX += this.driftSpeedX;
+            }
+
+            if (isFullBlock(level, x, center.y, center.z + this.driftSpeedZ)) {
+                this.driftSpeedZ = 0.0;
+            } else {
+                this.driftZ += this.driftSpeedZ;
+            }
+        }
+
+        private static boolean isFullBlock(ServerLevel level, double x, double y, double z) {
+            BlockPos pos = BlockPos.containing(x, y, z);
+            return level.getBlockState(pos).isCollisionShapeFullBlock(level, pos);
         }
 
         // THE JET FANS THE GAS OUT, THEN IT SLOWLY DIFFUSES

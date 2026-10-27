@@ -56,11 +56,11 @@ public final class FartGas {
     }
 
     /** CALLERS MUST BE IN A WORLD (THE GAS IS DROPPED WHEN LEAVING IT). */
-    public static void emit(Vec3 pos, float yaw) {
-        SIMULATION.emit(pos, yaw);
+    public static void emit(Vec3 pos, float yaw, int seed) {
+        SIMULATION.emit(pos, yaw, seed);
     }
 
-    public static void emitBurst(Vec3 pos, int lifetimeTicks, float size) {
-        SIMULATION.emitBurst(pos, lifetimeTicks, size);
+    public static void emitBurst(Vec3 pos, int lifetimeTicks, float size, int seed) {
+        SIMULATION.emitBurst(pos, lifetimeTicks, size, seed);
     }
 }

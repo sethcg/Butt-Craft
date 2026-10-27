@@ -7,14 +7,20 @@
 // BUTTCRAFT VOLUMETRIC FART GAS: DEPTH-AWARE UPSCALE
 //
 // THE RAY MARCHER (fart_gas.fsh) RUNS AT 1/N RESOLUTION. THIS PASS BLENDS ITS
-// PREMULTIPLIED RESULT ONTO THE FULL-RESOLUTION SCENE. EACH PIXEL TAKES THE FOUR
-// NEAREST LOW-RES TEXELS WITH BILINEAR WEIGHTS, SCALED DOWN WHEN THE SCENE DEPTH
-// THAT TEXEL MARCHED AGAINST DIFFERS FROM THIS PIXEL'S. THAT KEEPS GAS FROM
-// BLEEDING ACROSS SILHOUETTES (E.G. A HALO AROUND A BLOCK IN FRONT OF THE CLOUD).
-// NOT USED AT FULL RESOLUTION: THE MARCHER THEN BLENDS STRAIGHT ONTO THE SCENE.
+// PREMULTIPLIED RESULT (OR TEMPORAL SMOOTHING'S, fart_gas_resolve.fsh) ONTO THE
+// FULL-RESOLUTION SCENE. EACH PIXEL TAKES THE FOUR NEAREST LOW-RES TEXELS WITH
+// BILINEAR WEIGHTS, SCALED DOWN WHEN THE SCENE DEPTH THAT TEXEL MARCHED AGAINST
+// DIFFERS FROM THIS PIXEL'S. THAT KEEPS GAS FROM BLEEDING ACROSS SILHOUETTES (E.G.
+// A HALO AROUND A BLOCK IN FRONT OF THE CLOUD).
+// NOT USED AT FULL RESOLUTION WITHOUT TEMPORAL SMOOTHING: THE MARCHER THEN BLENDS
+// STRAIGHT ONTO THE SCENE.
 // =============================================================================
 
 uniform sampler2D GasSampler;
+// THE VIEW DISTANCE EACH LOW-RES TEXEL MARCHED AGAINST (R) AND ITS GAS'S DISTANCE (G), WRITTEN
+// BY THE MARCHER. TEXELS OUTSIDE ITS QUADS STAY CLEARED TO 0: THEY HOLD NO GAS, SO THEIR SMALL
+// WEIGHT DOESN'T MATTER.
+uniform sampler2D GasDistanceSampler;
 uniform sampler2D DepthSampler;
 
 layout(location = 0) in vec4 unprojectBase;
@@ -26,27 +32,20 @@ layout(location = 0) out vec4 fragColor;
 // PIXEL'S MAY HOLD GAS THAT IS HIDDEN HERE. WHEN ONLY SUCH TAPS ARE AVAILABLE, THE RESULT
 // FADES OUT INSTEAD OF BEING RENORMALISED BACK TO FULL STRENGTH. TAPS THAT MARCHED
 // AGAINST NEARER SCENERY HOLD LESS GAS THAN THIS PIXEL SHOULD, NEVER GAS IT CAN'T SEE,
-// SO THEY ARE STILL RENORMALISED.
+// SO THEY ARE STILL RENORMALISED. SO ARE FARTHER TAPS WHOSE GAS SITS CLEARLY IN FRONT OF
+// THIS PIXEL'S SCENERY TOO: NONE OF IT IS HIDDEN HERE (WITHOUT THIS, DISTANT GROUND NEXT
+// TO SKY DROPS PART OF THE GAS IN FRONT OF IT, LEAVING A LIGHT LINE ALONG THE HORIZON).
 const float HALO_TOLERANCE = 0.1;
 const float DEPTH_WEIGHT_BIAS = 0.02;
 
-// APPROXIMATE VIEW DISTANCE FOR A DEVICE DEPTH (REVERSED-Z: 0 = SKY). USES THIS
-// PIXEL'S UNPROJECTION FOR ALL TAPS; THE TINY XY ERROR DOESN'T MATTER FOR WEIGHTING.
-float viewDistance(float deviceDepth) {
-    if (deviceDepth <= 0.0) {
-        return 1e6;
-    }
-
-    return length(unproject(unprojectBase, unprojectDepth, deviceDepth));
-}
-
 void main() {
-    ivec2 fullSize = textureSize(DepthSampler, 0);
     ivec2 gasSize = textureSize(GasSampler, 0);
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     int divisor = max(Counts.w, 1);
 
-    float centerDistance = viewDistance(texelFetch(DepthSampler, pixel, 0).r);
+    // THIS PIXEL'S VIEW DISTANCE, MEASURED THE SAME WAY AS THE MARCHER'S (SKY = 1e6).
+    float deviceDepth = texelFetch(DepthSampler, pixel, 0).r;
+    float centerDistance = deviceDepth > 0.0 ? length(unproject(unprojectBase, unprojectDepth, deviceDepth)) : 1e6;
 
     // LOW-RES TEXEL I COVERS FULL-RES PIXELS [N * I, N * I + N), SO THIS PIXEL SITS AT:
     vec2 gasPos = gl_FragCoord.xy / float(divisor) - 0.5;
@@ -62,16 +61,19 @@ void main() {
         vec2 bilinear = mix(1.0 - f, f, vec2(offset));
         float b = bilinear.x * bilinear.y;
 
-        // THE MARCHER CLIPPED THIS TEXEL AGAINST THE DEPTH AT THE CENTER OF ITS BLOCK.
-        float tapDepth = texelFetch(DepthSampler, min(texel * divisor + divisor / 2, fullSize - 1), 0).r;
-        float tapDistance = viewDistance(tapDepth);
+        vec4 tapGas = texelFetch(GasSampler, texel, 0);
+        vec2 tapDistances = texelFetch(GasDistanceSampler, texel, 0).rg;
+        float tapDistance = tapDistances.x;
         float relative = abs(tapDistance - centerDistance) / min(centerDistance, 1e5);
         float w = b / (relative + DEPTH_WEIGHT_BIAS);
-        if (tapDistance > centerDistance) {
+        // Y IS THE GAS'S ABSORPTION-WEIGHTED DISTANCE, SO SOME OF IT LIES PAST THAT: KEEP A MARGIN.
+        // (AN EMPTY TAP'S Y IS ITS SCENE, SKY = 0, NOT GAS: IT KEEPS THE FADE AS BEFORE.)
+        bool gasInFront = tapGas.a > 0.0 && tapDistances.y * (1.0 + HALO_TOLERANCE) < centerDistance;
+        if (tapDistance > centerDistance && !gasInFront) {
             haloFloor += b / (HALO_TOLERANCE + DEPTH_WEIGHT_BIAS);
         }
 
-        sum += texelFetch(GasSampler, texel, 0) * w;
+        sum += tapGas * w;
         weightSum += w;
     }
 
@@ -80,5 +82,8 @@ void main() {
         discard;
     }
 
-    fragColor = gas;
+    // DITHER AT FULL RESOLUTION TO HIDE BANDING FROM THE 8-BIT SCENE TARGET (THE MARCHER'S OWN
+    // DITHER IS BLOCKY AFTER THE UPSCALE, AND TEMPORAL SMOOTHING AVERAGES IT AWAY).
+    gas.rgb += (interleavedGradientNoise(gl_FragCoord.xy, Frame.x) - 0.5) / 255.0;
+    fragColor = vec4(max(gas.rgb, vec3(0.0)), gas.a);
 }
