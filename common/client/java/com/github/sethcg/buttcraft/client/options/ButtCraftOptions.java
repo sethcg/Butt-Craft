@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.UnaryOperator;
 
-import com.github.sethcg.buttcraft.client.gas.FartGasQuality;
+import com.github.sethcg.buttcraft.client.gas.FartGasPreset;
 import com.github.sethcg.buttcraft.client.gas.FartGasSettings;
 import com.mojang.serialization.Codec;
 
@@ -20,23 +20,25 @@ import net.minecraft.network.chat.Component;
  * {@code VideoSettingsScreenMixin}). VALUES ARE STORED IN THE MOD'S OWN CONFIG FILE,
  * NOT {@code options.txt}.
  *
- * <p>BUILT FRESH FOR EACH SCREEN SO THEY ALWAYS START FROM THE SAVED VALUES. PICKING A PRESET
- * MOVES THE FIVE DETAIL OPTIONS; MOVING A DETAIL OPTION SWITCHES THE PRESET TO WHICHEVER ONE
- * MATCHES (OR CUSTOM), LIKE VANILLA'S GRAPHICS PRESET.
+ * <p>BUILT FRESH FOR EACH SCREEN SO THEY ALWAYS START FROM THE SAVED VALUES. PICKING DEFAULT
+ * RESETS THE FIVE DETAIL OPTIONS; MOVING A DETAIL OPTION SWITCHES THE PRESET TO CUSTOM (OR
+ * BACK TO DEFAULT IF EVERYTHING MATCHES AGAIN), LIKE VANILLA'S GRAPHICS PRESET.
+ *
+ * <p>THE DETAILS GO HOW MUCH GAS FIRST (MAX PUFFS), THEN HOW IT LOOKS, CHEAPEST TO TRADE FIRST.
  */
 public final class ButtCraftOptions {
 
     public static final Component HEADER = Component.translatable("options.buttcraft.header");
 
-    private static final Codec<FartGasQuality> QUALITY_CODEC = Codec.STRING.xmap(
-        value -> FartGasQuality.valueOf(value.toUpperCase(Locale.ROOT)),
-        quality -> quality.name().toLowerCase(Locale.ROOT));
+    private static final Codec<FartGasPreset> PRESET_CODEC = Codec.STRING.xmap(
+        value -> FartGasPreset.valueOf(value.toUpperCase(Locale.ROOT)),
+        preset -> preset.name().toLowerCase(Locale.ROOT));
 
-    public final OptionInstance<FartGasQuality> quality;
+    public final OptionInstance<FartGasPreset> preset;
+    public final OptionInstance<Integer> maxPuffs;
     public final OptionInstance<Integer> resolution;
     public final OptionInstance<Integer> viewSteps;
     public final OptionInstance<Integer> shadowSteps;
-    public final OptionInstance<Integer> puffBudget;
     public final OptionInstance<Boolean> smoothing;
 
     private boolean applyingPreset;
@@ -44,13 +46,17 @@ public final class ButtCraftOptions {
     public ButtCraftOptions() {
         FartGasSettings.Values values = FartGasSettings.current();
 
-        this.quality = new OptionInstance<>(
-            "options.buttcraft.gas_quality",
-            OptionInstance.cachedConstantTooltip(Component.translatable("options.buttcraft.gas_quality.tooltip")),
-            (caption, quality) -> Component.translatable(quality.translationKey()),
-            new OptionInstance.Enum<>(List.of(FartGasQuality.values()), QUALITY_CODEC),
+        this.preset = new OptionInstance<>(
+            "options.buttcraft.gas_preset",
+            OptionInstance.cachedConstantTooltip(Component.translatable("options.buttcraft.gas_preset.tooltip")),
+            (caption, preset) -> Component.translatable(preset.translationKey()),
+            new OptionInstance.Enum<>(List.of(FartGasPreset.values()), PRESET_CODEC),
             FartGasSettings.preset(),
             this::applyPreset);
+
+        this.maxPuffs = slider("options.buttcraft.gas_puffs",
+            FartGasSettings.MIN_MAX_PUFFS, FartGasSettings.MAX_MAX_PUFFS, values.maxPuffs(),
+            puffs -> this.update(v -> v.withMaxPuffs(puffs)));
 
         this.resolution = new OptionInstance<>(
             "options.buttcraft.gas_resolution",
@@ -68,10 +74,6 @@ public final class ButtCraftOptions {
             FartGasSettings.MIN_SHADOW_STEPS, FartGasSettings.MAX_SHADOW_STEPS, values.shadowSteps(),
             steps -> this.update(v -> v.withShadowSteps(steps)));
 
-        this.puffBudget = slider("options.buttcraft.gas_puffs",
-            FartGasSettings.MIN_PUFF_BUDGET, FartGasSettings.MAX_PUFF_BUDGET, values.puffBudget(),
-            budget -> this.update(v -> v.withPuffBudget(budget)));
-
         this.smoothing = OptionInstance.createBoolean(
             "options.buttcraft.gas_smoothing",
             OptionInstance.cachedConstantTooltip(Component.translatable("options.buttcraft.gas_smoothing.tooltip")),
@@ -80,7 +82,7 @@ public final class ButtCraftOptions {
     }
 
     public List<OptionInstance<?>> details() {
-        return List.of(this.resolution, this.viewSteps, this.shadowSteps, this.puffBudget, this.smoothing);
+        return List.of(this.maxPuffs, this.resolution, this.viewSteps, this.shadowSteps, this.smoothing);
     }
 
     private static OptionInstance<Integer> slider(String key, int min, int max, int initial,
@@ -95,20 +97,21 @@ public final class ButtCraftOptions {
             onChange);
     }
 
-    private void applyPreset(FartGasQuality preset) {
-        if (preset.values == null || this.applyingPreset) {
+    private void applyPreset(FartGasPreset preset) {
+        if (preset != FartGasPreset.DEFAULT || this.applyingPreset) {
             return; // CUSTOM KEEPS WHATEVER IS SET.
         }
 
+        FartGasSettings.Values defaults = FartGasSettings.DEFAULTS;
         this.applyingPreset = true;
         try {
-            FartGasSettings.set(preset.values);
+            FartGasSettings.set(defaults);
             OptionsSubScreen screen = currentScreen();
-            sync(screen, this.resolution, preset.values.resolutionDivisor());
-            sync(screen, this.viewSteps, preset.values.maxViewSteps());
-            sync(screen, this.shadowSteps, preset.values.shadowSteps());
-            sync(screen, this.puffBudget, preset.values.puffBudget());
-            sync(screen, this.smoothing, preset.values.temporalSmoothing());
+            sync(screen, this.maxPuffs, defaults.maxPuffs());
+            sync(screen, this.resolution, defaults.resolutionDivisor());
+            sync(screen, this.viewSteps, defaults.maxViewSteps());
+            sync(screen, this.shadowSteps, defaults.shadowSteps());
+            sync(screen, this.smoothing, defaults.temporalSmoothing());
         } finally {
             this.applyingPreset = false;
         }
@@ -122,7 +125,7 @@ public final class ButtCraftOptions {
         FartGasSettings.set(change.apply(FartGasSettings.current()));
         this.applyingPreset = true;
         try {
-            sync(currentScreen(), this.quality, FartGasSettings.preset());
+            sync(currentScreen(), this.preset, FartGasSettings.preset());
         } finally {
             this.applyingPreset = false;
         }

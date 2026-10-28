@@ -37,12 +37,12 @@
   "death.attack.buttcraft.fart_gas.player.14": "%1$s underestimated %2$s's rear artillery",
 
   "options.buttcraft.header": "Butt-Craft",
-  "options.buttcraft.gas_quality": "Gas Quality",
-  "options.buttcraft.gas_quality.low": "Low",
-  "options.buttcraft.gas_quality.medium": "Medium",
-  "options.buttcraft.gas_quality.high": "High",
-  "options.buttcraft.gas_quality.custom": "Custom",
-  "options.buttcraft.gas_quality.tooltip": "Sets all gas options at once. Lower runs faster.",
+  "options.buttcraft.gas_preset": "Gas Settings",
+  "options.buttcraft.gas_preset.default": "Default",
+  "options.buttcraft.gas_preset.custom": "Custom",
+  "options.buttcraft.gas_preset.tooltip": "Default resets every gas option below. Changing any of them switches to Custom.",
+  "options.buttcraft.gas_puffs": "Max Gas Puffs",
+  "options.buttcraft.gas_puffs.tooltip": "How many puffs of gas can exist at once. Each fart makes about 7. Past the limit, older puffs blend together. Lower is faster.",
   "options.buttcraft.gas_resolution": "Gas Resolution",
   "options.buttcraft.gas_resolution.1": "Full",
   "options.buttcraft.gas_resolution.2": "Half",
@@ -52,8 +52,6 @@
   "options.buttcraft.gas_detail.tooltip": "How smooth the gas looks. Lower is faster but can look grainy.",
   "options.buttcraft.gas_shading": "Gas Shading",
   "options.buttcraft.gas_shading.tooltip": "How realistic the shadows inside the gas look. Lower is faster.",
-  "options.buttcraft.gas_puffs": "Max Gas Clouds",
-  "options.buttcraft.gas_puffs.tooltip": "How many gas clouds can exist at once. Extras blend together. Lower is faster.",
   "options.buttcraft.gas_smoothing": "Gas Smoothing",
   "options.buttcraft.gas_smoothing.tooltip": "Blends each frame with the last few, so the gas looks smoother and less grainy. Can leave a faint trail when turning quickly."
 }

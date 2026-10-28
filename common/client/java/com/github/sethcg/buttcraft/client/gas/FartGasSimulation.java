@@ -10,6 +10,7 @@ import org.jspecify.annotations.Nullable;
 
 import com.github.sethcg.buttcraft.FartBreeze;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -43,7 +44,7 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  *   <li>PER-PUFF SKY/BLOCK LIGHT SAMPLING FOR LIGHTING</li>
  *   <li>HOW MUCH GAS LIES BETWEEN EACH PUFF AND THE SUN / SKY, SO WHOLE CLOUDS SHADE THEMSELVES</li>
  *   <li>CLUSTERS OF NEARBY PUFFS (ONE PER CLOUD) FOR ENTITY STIRRING AND THE SCREEN BOUNDS</li>
- *   <li>A PUFF BUDGET: WHEN FULL, THE MOST-OVERLAPPING SETTLED PUFFS MERGE INTO ONE</li>
+ *   <li>A PUFF LIMIT: WHEN FULL, THE MOST-OVERLAPPING PUFFS (SETTLED ONES FIRST) MERGE INTO ONE</li>
  * </ul>
  *
  * <p>EVERY FART'S RANDOMNESS COMES FROM THE SEED THE SERVER SENT, AND THE TURBULENCE AND BREEZE
@@ -51,15 +52,27 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  */
 public final class FartGasSimulation {
 
-    /** HARD CAP, SIZED TO THE SHADER'S PUFF ARRAY. THE ACTIVE BUDGET MAY BE LOWER. */
-    public static final int MAX_PUFFS = 64;
+    /** HARD CAP, SIZED TO THE SHADER'S PUFF ARRAY. THE MAX PUFFS SETTING MAY BE LOWER. */
+    public static final int MAX_PUFFS = 256;
 
-    /** HOW MANY SCREEN RECTANGLES THE GAS IS DRAWN IN, SIZED TO THE SHADER'S RectEnds. */
-    public static final int MAX_RECTS = 4;
+    /**
+     * HOW MANY SCREEN RECTANGLES THE GAS IS DRAWN IN. EACH PIXEL ONLY TESTS THE PUFFS OF THE
+     * RECTANGLES OVER IT, SO MORE OF THEM MEANS FEWER TESTS WHEN THERE ARE MANY CLOUDS. A
+     * MULTIPLE OF 4 (THE SHADER'S RectEnds IS ivec4s); MUST MATCH fart_gas_common.glsl.
+     */
+    public static final int MAX_RECTS = 8;
 
-    // EMISSION
+    // EMISSION: A FART RELEASES ONE PUFF A TICK (A BURST, TWO FOR ITS FIRST FEW TICKS). EACH IS
+    // PUFF_VOLUME TIMES THE VOLUME OF THE SMALL PUFFS THE GAS WAS TUNED WITH (18 PER FART), SO
+    // A FART TAKES FAR LESS OF THE PUFF LIMIT BUT HOLDS ABOUT AS MUCH GAS.
     private static final int EMIT_TICKS = 7;
-    private static final float INITIAL_RADIUS = 0.28F;
+    public static final int PUFFS_PER_FART = EMIT_TICKS;
+    private static final float PUFF_VOLUME = 2.5F;
+    // RADII SCALE BY THE CUBE ROOT OF PUFF_VOLUME, AREAS BY ITS SQUARE
+    private static final float PUFF_SCALE = (float) Math.cbrt(PUFF_VOLUME);
+    private static final float INITIAL_RADIUS = 0.28F * PUFF_SCALE;
+    // A PUFF THIS BIG HAS ITS SPAWN DENSITY; BIGGER ONES THIN OUT (SEE Puff.dilution)
+    private static final float DILUTION_RADIUS = 0.56F;
     private static final double JET_SPEED_MIN = 0.22;
     private static final double JET_SPEED_MAX = 0.40;
     private static final double JET_SPREAD = 0.32;
@@ -74,9 +87,11 @@ public final class FartGasSimulation {
     private static final double PRESSURE = 0.008;
 
     // GROWTH / DISSIPATION
-    private static final float DIFFUSION = 0.0065F;
+    // DIFFUSION GROWS radius^2, SO IT SCALES WITH AREA TO KEEP A PUFF'S VOLUME IN STEP WITH THE
+    // SMALL PUFFS IT STANDS IN FOR. MAX_RADIUS + WALL_SEARCH_MARGIN MUST STAY WITHIN WALL_SEARCH_BLOCKS.
+    private static final float DIFFUSION = 0.0065F * PUFF_SCALE * PUFF_SCALE;
     private static final float ENTRAINMENT = 0.16F;
-    private static final float MAX_RADIUS = 1.9F;
+    private static final float MAX_RADIUS = 2.5F;
 
     // A FART'S PUFFS LIVE THIS LONG PLUS UP TO PUFF_LIFETIME_SPREAD MORE, SO IT FADES OUT UNEVENLY.
     // THE SERVER'S POISON CLOUD LASTS ABOUT AS LONG AS THE MIDDLE OF THAT.
@@ -95,7 +110,7 @@ public final class FartGasSimulation {
 
     // THE SHADER'S METABALL FIELD: SUMMED WEIGHTS TIMES THIS GIVE ITS COVERAGE, AND ITS NOISE
     // LEAVES ABOUT SHADOW_FILL OF THE SMOOTH FIELD'S GAS. KEEP BOTH IN SYNC WITH fart_gas.fsh.
-    private static final float FIELD_COVERAGE_SCALE = 1.35F;
+    static final float FIELD_COVERAGE_SCALE = 1.35F;
     private static final float SHADOW_FILL = 0.5F;
 
     // WALLS: LOOK THIS FAR PAST A PUFF'S RADIUS FOR THE NEAREST SURFACE ON EACH SIDE, SO THEY
@@ -103,11 +118,17 @@ public final class FartGasSimulation {
     private static final double WALL_SEARCH_MARGIN = 0.5;
     private static final int WALL_SEARCH_BLOCKS = 3;
 
-    // CLUSTERS: PUFFS WHOSE SURFACES ARE CLOSER THAN THIS BELONG TO THE SAME CLOUD.
+    // CLUSTERS: PUFFS WHOSE SURFACES ARE CLOSER THAN THIS BELONG TO THE SAME CLOUD. fart_gas.fsh
+    // ONLY LOOKS FOR SHADOWING PUFFS IN THE RUNS UNDER ITS PIXEL, SO THIS MUST STAY ABOVE ITS
+    // SHADOW_REACH (0.6) WITH ROOM FOR A TICK OF MOVEMENT.
     private static final double CLUSTER_GAP = 1.0;
 
     // MERGING: ONLY PUFFS THIS OLD MERGE, SO THE TURBULENT JET KEEPS ITS SMALL PUFFS.
     private static final int MERGE_MIN_AGE = 12;
+    // OVERLAPPING PAIRS FARTHER FROM THE CAMERA MERGE FIRST: THEIR MERGE SCORE IS DIVIDED BY
+    // 1 + (DISTANCE / THIS)^2, SO BY 2 AT 16 BLOCKS, 5 AT 32 AND 10 AT 48. DISTANT GAS COVERS FEW
+    // PIXELS, SO IT LOSES LITTLE AS BIGGER PUFFS, AND THE LIMIT GOES TO THE CLOUDS UP CLOSE.
+    private static final double MERGE_LOD_DISTANCE = 16.0;
 
     private final List<Puff> puffs = new ArrayList<>();
     private final List<Emitter> emitters = new ArrayList<>();
@@ -155,6 +176,11 @@ public final class FartGasSimulation {
 
     public List<Puff> puffs() {
         return this.puffs;
+    }
+
+    /** HOW MANY SEPARATE CLOUDS THE PUFFS FORMED AT THE LAST TICK. */
+    public int cloudCount() {
+        return this.puffs.isEmpty() ? 0 : this.clusterCount;
     }
 
     /** THE (NORMALISED) DIRECTION SHADOWS ARE CAST FROM. WITHOUT DIRECT LIGHT (E.G. THE END) THERE ARE NONE. */
@@ -242,14 +268,12 @@ public final class FartGasSimulation {
             return;
         }
 
-        // A LOWERED BUDGET (SETTING CHANGED MID-CLOUD) IS REACHED BY MERGING AS PUFFS SPAWN.
-        int budget = Mth.clamp(FartGasSettings.current().puffBudget(), 1, MAX_PUFFS);
+        // A LOWERED LIMIT (SETTING CHANGED MID-CLOUD) IS REACHED BY MERGING AS PUFFS SPAWN.
+        int budget = Mth.clamp(FartGasSettings.current().maxPuffs(), 1, MAX_PUFFS);
         for (int i = this.emitters.size() - 1; i >= 0; i--) {
             Emitter emitter = this.emitters.get(i);
             // A BURST RELEASES MORE GAS AT ONCE, SINCE IT SPREADS OUT IN EVERY DIRECTION.
-            int count = emitter.direction == null
-                ? (emitter.age < 4 ? 4 : 3)
-                : (emitter.age < 4 ? 3 : 2);
+            int count = emitter.direction == null && emitter.age < 4 ? 2 : 1;
             count = Math.max(1, Math.round(count * emitter.size));
             for (int n = 0; n < count; n++) {
                 this.spawnPuff(level, emitter, budget);
@@ -263,9 +287,11 @@ public final class FartGasSimulation {
     }
 
     private void spawnPuff(ClientLevel level, Emitter emitter, int budget) {
+        // MERGE SETTLED PUFFS FIRST. WHEN NONE ARE SETTLED (SEVERAL FARTS AT ONCE, OR A BUDGET
+        // SMALLER THAN ONE FART), MERGE YOUNG ONES RATHER THAN DELETE GAS OUTRIGHT.
         while (this.puffs.size() >= budget) {
-            if (!this.mergeClosestPair()) {
-                this.puffs.remove(0);
+            if (!this.mergeClosestPair(MERGE_MIN_AGE) && !this.mergeClosestPair(0)) {
+                this.removeFaintestPuff();
             }
         }
 
@@ -344,23 +370,26 @@ public final class FartGasSimulation {
     }
 
     /**
-     * MERGES THE SETTLED PAIR WITH THE MOST OVERLAP (SMALLEST DISTANCE RELATIVE TO
-     * THEIR RADII) INTO ONE BIGGER PUFF. RETURNS FALSE IF NO PAIR IS OLD ENOUGH.
+     * MERGES THE PAIR (BOTH AT LEAST minAge TICKS OLD) WITH THE MOST OVERLAP (SMALLEST
+     * DISTANCE RELATIVE TO THEIR RADII) INTO ONE BIGGER PUFF, FAVOURING OVERLAPPING PAIRS FAR
+     * FROM THE CAMERA (SEE MERGE_LOD_DISTANCE). PAIRS THAT DON'T OVERLAP ARE NEVER FAVOURED, SO
+     * DISTANT CLOUDS DON'T MERGE INTO EACH OTHER. RETURNS FALSE IF NO PAIR IS OLD ENOUGH.
      */
-    private boolean mergeClosestPair() {
+    private boolean mergeClosestPair(int minAge) {
+        Vec3 camera = Minecraft.getInstance().gameRenderer.mainCamera().position();
         int size = this.puffs.size();
         int bestA = -1;
         int bestB = -1;
         double best = Double.MAX_VALUE;
         for (int i = 0; i < size; i++) {
             Puff a = this.puffs.get(i);
-            if (a.age < MERGE_MIN_AGE) {
+            if (a.age < minAge) {
                 continue;
             }
 
             for (int j = i + 1; j < size; j++) {
                 Puff b = this.puffs.get(j);
-                if (b.age < MERGE_MIN_AGE) {
+                if (b.age < minAge) {
                     continue;
                 }
 
@@ -369,6 +398,11 @@ public final class FartGasSimulation {
                 double dz = b.z - a.z;
                 double radii = a.radius + b.radius;
                 double score = (dx * dx + dy * dy + dz * dz) / (radii * radii);
+                if (score < 1.0) {
+                    double lod = Math.sqrt(camera.distanceToSqr(a.x, a.y, a.z)) / MERGE_LOD_DISTANCE;
+                    score /= 1.0 + lod * lod;
+                }
+
                 if (score < best) {
                     best = score;
                     bestA = i;
@@ -384,6 +418,17 @@ public final class FartGasSimulation {
         Puff b = this.puffs.remove(bestB);
         this.puffs.get(bestA).absorb(b);
         return true;
+    }
+
+    /** LAST RESORT WHEN NOTHING CAN MERGE (A BUDGET OF ONE): DROPS THE LEAST VISIBLE PUFF. */
+    private void removeFaintestPuff() {
+        int faintest = 0;
+        for (int i = 1; i < this.puffs.size(); i++) {
+            if (this.puffs.get(i).density(1.0F) < this.puffs.get(faintest).density(1.0F)) {
+                faintest = i;
+            }
+        }
+        this.puffs.remove(faintest);
     }
 
     /**
@@ -933,7 +978,7 @@ public final class FartGasSimulation {
         }
 
         private static float dilution(float radius) {
-            return (float) Math.pow(INITIAL_RADIUS * 2.0F / Math.max(radius, INITIAL_RADIUS * 2.0F), 0.85);
+            return (float) Math.pow(DILUTION_RADIUS / Math.max(radius, DILUTION_RADIUS), 0.85);
         }
 
         /**
@@ -977,9 +1022,10 @@ public final class FartGasSimulation {
             this.sunDepth = this.sunDepth * wa + other.sunDepth * wb;
             this.skyDepth = this.skyDepth * wa + other.skyDepth * wb;
 
-            // LIVE AS LONG AS THE LONGER-LIVED HALF.
+            // LIVE AS LONG AS THE LONGER-LIVED HALF. TAKE THE OLDER AGE, SO MERGING INTO A PUFF THAT
+            // IS STILL FADING IN (WHEN NOTHING SETTLED IS LEFT TO MERGE) DOESN'T BLINK THE RESULT.
             int remaining = Math.max(this.lifetime - this.age, other.lifetime - other.age);
-            this.age = Math.min(this.age, other.age);
+            this.age = Math.max(this.age, other.age);
             this.lifetime = this.age + remaining;
         }
     }

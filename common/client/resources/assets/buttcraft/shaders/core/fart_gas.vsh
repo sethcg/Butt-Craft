@@ -19,9 +19,15 @@
 // SEPARATE CLOUDS DON'T MARCH THE SCREEN BETWEEN THEM. QUADS THAT WOULD OVERLAP A LOT ARE
 // MERGED. THAT IS ONLY SAFE WITHOUT BLENDING, SO PASSES THAT BLEND ONTO THE SCENE DEFINE
 // FART_GAS_SINGLE_RECT AND DRAW ONE QUAD AROUND EVERY PUFF.
+//
+// EITHER WAY IT ALSO OUTPUTS EACH RUN'S OWN BOUNDS (BEFORE ANY MERGING). fart_gas.fsh ONLY
+// TESTS THE PUFFS OF THE RUNS WHOSE BOUNDS HOLD ITS PIXEL, SO A PIXEL IN A MERGED QUAD, OR
+// WHERE TWO QUADS OVERLAP, STILL SEES EVERY RUN THAT CAN REACH IT AND NO OTHERS.
 
 layout(location = 0) out vec4 unprojectBase;
 layout(location = 1) out vec4 unprojectDepth;
+// EVERY VERTEX WORKS THESE OUT THE SAME, SO flat LOSES NOTHING. EMPTY RUNS ARE EMPTY_RECT.
+layout(location = 2) flat out vec4 runBounds[MAX_RECTS];
 
 const vec2 CORNERS[6] = vec2[](
     vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),
@@ -98,16 +104,13 @@ vec4 clippedBoxRect(vec3 c, float r) {
 // NDC BOUNDS OF PUFFS [first, end).
 vec4 puffRect(int first, int end, mat3 worldToView) {
     vec4 rect = EMPTY_RECT;
-    for (int i = 0; i < MAX_PUFFS; i++) {
+    for (int n = 0; n < MAX_PUFFS; n++) {
+        int i = first + n;
         if (i >= end) {
             break;
         }
 
-        if (i < first) {
-            continue;
-        }
-
-        vec4 shape = Puffs[i * 4];
+        vec4 shape = Puffs[i].shape;
         vec3 center = worldToView * shape.xyz;
         vec4 k = ProjMat * vec4(center, 1.0);
         vec3 mw = vec3(ProjMat[0][3], ProjMat[1][3], ProjMat[2][3]);
@@ -130,21 +133,26 @@ void main() {
     mat3 worldToView = transpose(mat3(ViewToWorld));
     int puffCount = min(Counts.x, MAX_PUFFS);
 
-    #ifdef FART_GAS_SINGLE_RECT
-    vec4 bounds = puffRect(0, puffCount, worldToView);
-    #else
     // EVERY VERTEX WORKS OUT ALL THE RECTANGLES (CHEAP: EACH PUFF IS PROJECTED ONCE) AND MERGES
-    // THEM THE SAME WAY, SO THE QUADS AGREE. TWO RECTANGLES MERGE WHEN THEIR UNION IS NO BIGGER
-    // THAN BOTH OF THEM: MARCHING THE OVERLAP TWICE WOULD COST MORE THAN THE UNION.
+    // THEM THE SAME WAY, SO THE QUADS AGREE.
     int rectCount = clamp(Frame.y, 1, MAX_RECTS);
     vec4 rects[MAX_RECTS];
     for (int r = 0; r < MAX_RECTS; r++) {
-        int first = r == 0 ? 0 : RectEnds[r - 1];
-        rects[r] = r < rectCount ? puffRect(first, min(RectEnds[r], puffCount), worldToView) : EMPTY_RECT;
+        int first = r == 0 ? 0 : rectEnd(r - 1);
+        rects[r] = r < rectCount ? puffRect(first, min(rectEnd(r), puffCount), worldToView) : EMPTY_RECT;
+        runBounds[r] = rects[r];
     }
 
-    // A MERGED RECTANGLE MAY NOW OVERLAP ONES IT WAS ALREADY COMPARED WITH, SO REPEAT UNTIL
-    // NOTHING MERGES. EACH MERGE EMPTIES A RECTANGLE, SO THAT TAKES AT MOST MAX_RECTS PASSES.
+    #ifdef FART_GAS_SINGLE_RECT
+    vec4 bounds = EMPTY_RECT;
+    for (int r = 0; r < MAX_RECTS; r++) {
+        bounds = unionRect(bounds, rects[r]);
+    }
+    #else
+    // TWO RECTANGLES MERGE WHEN THEIR UNION IS NO BIGGER THAN BOTH OF THEM: MARCHING THE
+    // OVERLAP TWICE WOULD COST MORE THAN THE UNION. A MERGED RECTANGLE MAY NOW OVERLAP ONES
+    // IT WAS ALREADY COMPARED WITH, SO REPEAT UNTIL NOTHING MERGES. EACH MERGE EMPTIES A
+    // RECTANGLE, SO THAT TAKES AT MOST MAX_RECTS PASSES.
     for (int pass = 0; pass < MAX_RECTS; pass++) {
         bool merged = false;
         for (int a = 0; a < MAX_RECTS; a++) {

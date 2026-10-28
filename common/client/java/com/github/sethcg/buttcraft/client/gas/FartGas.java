@@ -33,6 +33,7 @@ public final class FartGas {
         LOGGER.info("FART GAS SETTINGS: {} ({}).", FartGasSettings.current(), FartGasSettings.preset());
 
         FartGasRenderer.initialize();
+        FartGasDebug.register();
 
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> RENDERER.close());
 
@@ -48,7 +49,13 @@ public final class FartGas {
             }
 
             if (!client.isPaused()) {
+                long start = System.nanoTime();
                 SIMULATION.tick(client.level);
+                long tickNanos = System.nanoTime() - start;
+                FartGasDebug.recordTick(tickNanos, SIMULATION.puffs().size(), SIMULATION.cloudCount());
+                if (FartGasBenchmark.ACTIVE) {
+                    FartGasBenchmark.tick(client, SIMULATION, tickNanos);
+                }
             }
         });
 

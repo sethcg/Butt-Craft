@@ -36,15 +36,21 @@ public final class FartGasUniforms {
     private static final Vector3fc GAS_ALBEDO = new Vector3f(0.64F, 0.74F, 0.40F);
     private static final float GAS_DENSITY = 1.6F;
 
-    // PUFFS FAINTER THAN THIS ARE NOT UPLOADED. THE SHADER STOPS COLLECTING PUFFS ALONG A RAY
-    // ONCE ITS HIT LIST IS FULL, SO THE REST ARE UPLOADED DENSEST FIRST.
+    // PUFFS FAINTER THAN THIS ARE NOT UPLOADED. THE SHADER STOPS COLLECTING SHADOW-ONLY PUFFS
+    // ONCE ITS HIT LIST IS FULL, SO THE REST ARE UPLOADED DENSEST FIRST. (ON THE VIEW RAY IT
+    // KEEPS THE PUFFS THAT ADD THE MOST GAS, WHATEVER THEIR ORDER.)
     private static final float MIN_VISIBLE_DENSITY = 0.002F;
 
-    // A SIDE WITH NO WALL NEARBY IS UPLOADED THIS FAR (BLOCKS) FROM THE PUFF, WELL OUTSIDE IT.
-    private static final float NO_WALL = 1.0E4F;
+    // WALL OFFSETS ARE 16-BIT FIXED POINT: -WALL_RANGE TO +WALL_RANGE BLOCKS FROM THE PUFF'S CENTER,
+    // WALL_STEPS_PER_BLOCK TO A BLOCK. A SIDE WITH NO WALL NEARBY GOES AT THE END OF THE RANGE, WELL
+    // OUTSIDE THE PUFF. MUST MATCH WALL_RANGE / WALL_STEP IN fart_gas_common.glsl.
+    private static final float WALL_RANGE = 8.0F;
+    private static final float WALL_STEPS_PER_BLOCK = 4096.0F;
 
-    // EACH PUFF IS FOUR vec4s (SEE THE Puffs ARRAY IN fart_gas_common.glsl).
-    private static final int VEC4S_PER_PUFF = 4;
+    // FIELD COVERAGE AT THE CAMERA WHERE IT STARTS COUNTING AS INSIDE THE GAS, AND WHERE FULLY.
+    private static final float IMMERSION_START = 0.05F;
+    private static final float IMMERSION_FULL = 0.4F;
+
 
     // SORTING SCRATCH (RENDER THREAD ONLY).
     private static final FartGasSimulation.Puff[] SORTED = new FartGasSimulation.Puff[FartGasSimulation.MAX_PUFFS];
@@ -53,6 +59,9 @@ public final class FartGasUniforms {
     private static final float[] GROUPED_DENSITY = new float[FartGasSimulation.MAX_PUFFS];
     private static final int[] RECT_ORDER = new int[FartGasSimulation.MAX_RECTS];
     private static final int[] RECT_ENDS = new int[FartGasSimulation.MAX_RECTS];
+
+    /** THE LAST UPLOADED CAMERA IMMERSION (SEE immersion), FOR {@link FartGasBenchmark}. */
+    static float lastImmersion;
 
     /** SIZE OF THE BLOCK IN BYTES. */
     public static final int SIZE;
@@ -68,10 +77,13 @@ public final class FartGasUniforms {
             .putVec4()
             .putVec4()
             .putIVec4()
-            .putIVec4()
             .putIVec4();
-        for (int i = 0; i < FartGasSimulation.MAX_PUFFS * VEC4S_PER_PUFF; i++) {
-            size.putVec4();
+        for (int i = 0; i < FartGasSimulation.MAX_RECTS / 4; i++) {
+            size.putIVec4();
+        }
+        // EACH PUFF IS A Puff STRUCT (SEE fart_gas_common.glsl): TWO vec4s AND A uvec4.
+        for (int i = 0; i < FartGasSimulation.MAX_PUFFS; i++) {
+            size.putVec4().putVec4().putIVec4();
         }
         SIZE = size.get();
     }
@@ -88,8 +100,12 @@ public final class FartGasUniforms {
         public static final Temporal NONE = new Temporal(0, 0.0F, new Vector3f(), new Matrix4f());
     }
 
-    /** puffs: HOW MANY PUFFS WERE UPLOADED (0 = NOTHING VISIBLE TO DRAW). rects: HOW MANY SCREEN RECTANGLES THEY FILL. */
-    public record Upload(int puffs, int rects) {
+    /**
+     * puffs: HOW MANY PUFFS WERE UPLOADED (0 = NOTHING VISIBLE TO DRAW). rects: HOW MANY SCREEN
+     * RECTANGLES THEY FILL. largestRun: THE MOST PUFFS IN ONE RECTANGLE, ROUGHLY THE MOST A
+     * PIXEL TESTS UNLESS RECTANGLES OVERLAP ON SCREEN.
+     */
+    public record Upload(int puffs, int rects, int largestRun) {
     }
 
     private FartGasUniforms() {
@@ -121,49 +137,86 @@ public final class FartGasUniforms {
 
         Vector3fc lightDir = lighting.direction();
         builder.putVec4(lightDir.x(), lightDir.y(), lightDir.z(), lighting.strength());
+        int count = sortVisible(puffs, partial);
+        int rects = groupByRect(count);
+
         builder.putVec4(lighting.color().x(), lighting.color().y(), lighting.color().z(), 0.0F);
-        builder.putVec4(lighting.ambient().x(), lighting.ambient().y(), lighting.ambient().z(), 0.0F);
+        lastImmersion = immersion(count, cameraPos, partial);
+        builder.putVec4(lighting.ambient().x(), lighting.ambient().y(), lighting.ambient().z(), lastImmersion);
         builder.putVec4(GAS_ALBEDO.x(), GAS_ALBEDO.y(), GAS_ALBEDO.z(), GAS_DENSITY);
 
         Vector3fc motion = temporal.cameraMotion();
         builder.putVec4(motion.x(), motion.y(), motion.z(), temporal.historyWeight());
 
-        int count = sortVisible(puffs, partial);
-        int rects = groupByRect(count);
         builder.putIVec4(count, quality.maxViewSteps(), quality.shadowSteps(), quality.resolutionDivisor());
         builder.putIVec4(temporal.frame(), rects, 0, 0);
-        builder.putIVec4(RECT_ENDS[0], RECT_ENDS[1], RECT_ENDS[2], RECT_ENDS[3]);
+        for (int r = 0; r < FartGasSimulation.MAX_RECTS; r += 4) {
+            builder.putIVec4(RECT_ENDS[r], RECT_ENDS[r + 1], RECT_ENDS[r + 2], RECT_ENDS[r + 3]);
+        }
 
         // ONLY THE VISIBLE PUFFS: THE SHADERS NEVER READ PAST THE COUNT, SO THE REST OF THE
         // ARRAY CAN HOLD WHATEVER WAS THERE BEFORE.
         for (int i = 0; i < count; i++) {
             FartGasSimulation.Puff puff = GROUPED[i];
             float radius = puff.radius(partial);
-            float x = (float) (puff.x(partial) - cameraPos.x);
-            float y = (float) (puff.y(partial) - cameraPos.y);
-            float z = (float) (puff.z(partial) - cameraPos.z);
-            builder.putVec4(x, y, z, radius);
-            builder.putVec4(GROUPED_DENSITY[i], puff.skyLight, puff.blockLight, 1.0F / (radius * radius));
-            builder.putVec4(
-                wall(puff.wallMinX, cameraPos.x, x - NO_WALL),
-                wall(puff.wallMinY, cameraPos.y, y - NO_WALL),
-                wall(puff.wallMinZ, cameraPos.z, z - NO_WALL),
-                puff.sunDepth);
-            builder.putVec4(
-                wall(puff.wallMaxX, cameraPos.x, x + NO_WALL),
-                wall(puff.wallMaxY, cameraPos.y, y + NO_WALL),
-                wall(puff.wallMaxZ, cameraPos.z, z + NO_WALL),
-                puff.skyDepth);
+            double px = puff.x(partial);
+            double py = puff.y(partial);
+            double pz = puff.z(partial);
+            builder.putVec4((float) (px - cameraPos.x), (float) (py - cameraPos.y), (float) (pz - cameraPos.z), radius);
+            builder.putVec4(GROUPED_DENSITY[i], 1.0F / (radius * radius), puff.sunDepth, puff.skyDepth);
+            builder.putIVec4(
+                pack(unorm16(puff.skyLight), unorm16(puff.blockLight)),
+                pack(wall(puff.wallMinX, px, -WALL_RANGE), wall(puff.wallMinY, py, -WALL_RANGE)),
+                pack(wall(puff.wallMinZ, pz, -WALL_RANGE), wall(puff.wallMaxX, px, WALL_RANGE)),
+                pack(wall(puff.wallMaxY, py, WALL_RANGE), wall(puff.wallMaxZ, pz, WALL_RANGE)));
             SORTED[i] = null;
             GROUPED[i] = null;
         }
 
-        return new Upload(count, rects);
+        int largestRun = 0;
+        for (int r = 0; r < rects; r++) {
+            largestRun = Math.max(largestRun, RECT_ENDS[r] - (r == 0 ? 0 : RECT_ENDS[r - 1]));
+        }
+
+        return new Upload(count, rects, largestRun);
     }
 
-    // A WALL'S CAMERA-RELATIVE COORDINATE, OR noWall IF THERE IS NONE ON THAT SIDE
-    private static float wall(double coordinate, double camera, float noWall) {
-        return Double.isFinite(coordinate) ? (float) (coordinate - camera) : noWall;
+    /**
+     * HOW FAR INSIDE THE GAS THE CAMERA IS, 0-1: THE SHADER'S SMOOTH FIELD COVERAGE AT THE CAMERA
+     * (WITHOUT WALLS OR NOISE), FROM IMMERSION_START TO IMMERSION_FULL. FROM INSIDE, THE GAS FILLS
+     * THE SCREEN, SO fart_gas.fsh SKIPS ITS SHADOW MARCH AND ONLY MARCHES THE NEAREST GAS.
+     */
+    private static float immersion(int count, Vec3 cameraPos, float partial) {
+        float weightSum = 0.0F;
+        for (int i = 0; i < count; i++) {
+            FartGasSimulation.Puff puff = GROUPED[i];
+            float radius = puff.radius(partial);
+            double dx = puff.x(partial) - cameraPos.x;
+            double dy = puff.y(partial) - cameraPos.y;
+            double dz = puff.z(partial) - cameraPos.z;
+            float d2 = (float) ((dx * dx + dy * dy + dz * dz) / (radius * radius));
+            if (d2 < 1.0F) {
+                weightSum += (1.0F - d2) * (1.0F - d2);
+            }
+        }
+
+        return smoothstep(IMMERSION_START, IMMERSION_FULL, Math.min(weightSum * FartGasSimulation.FIELD_COVERAGE_SCALE, 1.0F));
+    }
+
+    // A WALL'S OFFSET FROM THE PUFF'S CENTER AS 16-BIT FIXED POINT (SEE WALL_RANGE), OR noWall
+    // IF THERE IS NONE ON THAT SIDE
+    private static int wall(double coordinate, double center, float noWall) {
+        double offset = Double.isFinite(coordinate) ? coordinate - center : noWall;
+        return (int) Mth.clamp(Math.round((offset + WALL_RANGE) * WALL_STEPS_PER_BLOCK), 0L, 0xFFFFL);
+    }
+
+    private static int unorm16(float value) {
+        return Math.round(Mth.clamp(value, 0.0F, 1.0F) * 0xFFFF);
+    }
+
+    // TWO 16-BIT VALUES IN ONE uint, low IN THE LOW BITS
+    private static int pack(int low, int high) {
+        return low | high << 16;
     }
 
     /** FILLS SORTED / SORTED_DENSITY WITH THE VISIBLE PUFFS, DENSEST FIRST, AND RETURNS HOW MANY. */

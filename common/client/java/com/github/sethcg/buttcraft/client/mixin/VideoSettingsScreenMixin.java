@@ -26,7 +26,7 @@ public abstract class VideoSettingsScreenMixin extends OptionsSubScreen {
     private void buttcraft$addOptions(CallbackInfo ci) {
         ButtCraftOptions options = new ButtCraftOptions();
         this.list.addHeader(ButtCraftOptions.HEADER);
-        this.list.addSmall(options.quality);
+        this.list.addBig(options.preset);
         this.list.addSmall(options.details().toArray(OptionInstance[]::new));
     }
 }

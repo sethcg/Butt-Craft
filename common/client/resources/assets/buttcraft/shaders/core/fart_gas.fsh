@@ -13,8 +13,9 @@
 // LIGHT LEVEL, NEAREST WALLS, GAS BETWEEN IT AND THE LIGHT / SKY). THIS SHADER TURNS THEM
 // INTO A CONTINUOUS PARTICIPATING MEDIUM:
 //
-//   1. INTERSECT THE VIEW RAY WITH EVERY PUFF'S BOUNDING SPHERE AND MERGE THE HITS
-//      INTO DISJOINT SPANS. ALSO COLLECT NEARBY PUFFS THAT CAN ONLY SHADOW THE RAY.
+//   1. INTERSECT THE VIEW RAY WITH THE BOUNDING SPHERE OF EVERY PUFF THAT CAN REACH THIS
+//      PIXEL AND MERGE THE HITS INTO DISJOINT SPANS. ALSO COLLECT NEARBY PUFFS THAT CAN
+//      ONLY SHADOW THE RAY.
 //   2. MARCH ONLY THOSE SPANS (GAPS BETWEEN SEPARATE CLOUDS COST NO STEPS), CLIPPED
 //      BY THE SCENE DEPTH BUFFER.
 //   3. BUILD DENSITY FROM A SMOOTH METABALL FIELD, FADED OUT AT THE WALLS AROUND EACH
@@ -46,6 +47,8 @@ uniform sampler2D DepthSampler;
 
 layout(location = 0) in vec4 unprojectBase;
 layout(location = 1) in vec4 unprojectDepth;
+// EACH RUN'S SCREEN BOUNDS (NDC MIN XY, MAX XY), FROM fart_gas.vsh
+layout(location = 2) flat in vec4 runBounds[MAX_RECTS];
 
 layout(location = 0) out vec4 fragColor;
 #ifndef FART_GAS_DIRECT
@@ -101,7 +104,9 @@ const float WARP_STRENGTH = 2.7;
 const float WARP_REUSE = 0.15;
 
 // DISTANCE LOD (BLOCKS): VIEW STEPS GROW PAST STEP_LOD_START, AND THE DETAIL
-// OCTAVE FADES OUT BETWEEN DETAIL_LOD_START AND DETAIL_LOD_END.
+// OCTAVE FADES OUT BETWEEN DETAIL_LOD_START AND DETAIL_LOD_END. SO DOES THE SHADOW MARCH:
+// THE FINE SELF-SHADOWING IT ADDS IS TOO SMALL TO SEE THAT FAR AWAY, SO THE SMOOTH FIELD
+// STANDS IN FOR IT AND PAST DETAIL_LOD_END IT IS SKIPPED.
 const float BASE_STEP = 0.05;
 const float STEP_LOD_START = 8.0;
 const float MAX_STEP_SCALE = 4.0;
@@ -110,6 +115,12 @@ const float DETAIL_LOD_END = 32.0;
 
 // STOP MARCHING ONCE THIS LITTLE OF THE BACKGROUND STILL SHOWS THROUGH.
 const float MIN_TRANSMITTANCE = 0.03;
+
+// WITH THE CAMERA INSIDE THE GAS (AmbientColor.w = 1), ONLY GAS WITHIN THIS FAR (BLOCKS) IS
+// MARCHED: WHAT IS BEHIND IT SHOWS FAINTLY THROUGH THE GAS IN FRONT, AND THE STEPS ARE WORTH MORE
+// UP CLOSE. HALF IMMERSED, IT REACHES TWICE AS FAR, AND SO ON. THE SHADOW MARCH IS SKIPPED TOO:
+// LOOKING THROUGH THE GAS RATHER THAN AT ITS LIT SURFACE, ITS FINE SELF-SHADOWING DOESN'T SHOW.
+const float IMMERSED_REACH = 8.0;
 
 // THE SHADOW MARCH ONLY REACHES THIS FAR (BLOCKS) TOWARD THE LIGHT, FOR THE NOISE'S FINE
 // SELF-SHADOWING; THE CPU'S PER-PUFF OPTICAL DEPTHS COVER THE REST OF THE CLOUD. ITS STEPS
@@ -174,7 +185,7 @@ float brightnessCurve(float level) {
 // PUFF FIELD
 // -----------------------------------------------------------------------------
 
-// THE HIT PUFFS' INDICES (0-63), FOUR TO A uint SO THE LIST TAKES A QUARTER OF THE REGISTERS.
+// THE HIT PUFFS' INDICES (0-255), FOUR TO A uint SO THE LIST TAKES A QUARTER OF THE REGISTERS.
 // HITS [0, viewHitCount) ARE ON THE VIEW RAY. HITS [viewHitCount, hitCount) ARE OFF IT BUT
 // WITHIN SHADOW_REACH, SO THEY ONLY MATTER TO SHADOW SAMPLES.
 uint hitWords[MAX_HITS / 4];
@@ -188,6 +199,31 @@ int hitPuff(int k) {
 void addHit(int puff) {
     hitWords[hitCount >> 2] |= uint(puff) << ((hitCount & 3) * 8);
     hitCount++;
+}
+
+void setHit(int k, int puff) {
+    int shift = (k & 3) * 8;
+    hitWords[k >> 2] = (hitWords[k >> 2] & ~(255u << shift)) | (uint(puff) << shift);
+}
+
+// WHERE ALONG THE VIEW RAY EACH HIT MATTERS: A SAMPLE AT t IS INSIDE VIEW HIT k ONLY WHEN
+// |t - hitMid[k]| < hitHalf[k], AND ITS SHADOW SAMPLES CAN ONLY REACH HIT k WHEN
+// |t - hitMid[k]| < hitReach[k] (THE PUFF GROWN BY SHADOW_REACH). INSIDE A CLOUD THE RAY HITS
+// MOST OF ITS PUFFS, BUT EACH SAMPLE IS ONLY IN A FEW, SO THE FIELD LOOPS SKIP THE REST WITHOUT
+// READING THEM.
+float hitMid[MAX_HITS];
+float hitHalf[MAX_VIEW_HITS];
+float hitReach[MAX_HITS];
+
+// SETS HIT k'S WINDOWS. toCenter / b ARE THE PUFF'S CENTER FROM THE RAY ORIGIN, AND ALONG THE RAY.
+void setWindow(int k, vec3 toCenter, float b, float radius) {
+    float offRay = dot(toCenter, toCenter) - b * b;
+    float reach = radius + SHADOW_REACH;
+    hitMid[k] = b;
+    if (k < MAX_VIEW_HITS) {
+        hitHalf[k] = sqrt(max(radius * radius - offRay, 0.0));
+    }
+    hitReach[k] = sqrt(max(reach * reach - offRay, 0.0));
 }
 
 // THE VIEW RAY'S PUFF INTERVALS, SORTED AND MERGED INTO DISJOINT SPANS.
@@ -208,7 +244,8 @@ struct Field {
     float skyDepth;    // ... AND STRAIGHT UP
 };
 
-Field puffField(vec3 p) {
+// p IS THE VIEW RAY AT t.
+Field puffField(vec3 p, float t) {
     float weightSum = 0.0;
     float densitySum = 0.0;
     vec3 lightSum = vec3(0.0);   // SKY LIGHT, BLOCK LIGHT, HEIGHT
@@ -220,28 +257,37 @@ Field puffField(vec3 p) {
             break;
         }
 
-        int i = hitPuff(k) * 4;
-        vec4 shape = Puffs[i];
-        vec4 data = Puffs[i + 1];
+        if (abs(t - hitMid[k]) >= hitHalf[k]) {
+            continue;
+        }
+
+        int i = hitPuff(k);
+        vec4 shape = Puffs[i].shape;
+        vec4 data = Puffs[i].data;
         vec3 d = p - shape.xyz;
-        float d2 = dot(d, d) * data.w;
+        float d2 = dot(d, d) * data.y;
         if (d2 >= 1.0) {
             continue;
         }
 
+        uvec4 bits = Puffs[i].bits;
+        vec4 lo = vec4(bits & 0xFFFFu);
+        vec4 hi = vec4(bits >> 16u);
+        vec2 light = vec2(lo.x, hi.x) / 65535.0;
+
         // HOW FAR THE POINT IS FROM THE NEAREST WALL AROUND THIS PUFF (NEGATIVE PAST IT).
-        vec4 below = Puffs[i + 2];
-        vec4 above = Puffs[i + 3];
-        vec3 fromBelow = p - below.xyz;
-        vec3 toAbove = above.xyz - p;
+        vec3 below = vec3(lo.y, hi.y, lo.z) * WALL_STEP - WALL_RANGE;
+        vec3 above = vec3(hi.z, lo.w, hi.w) * WALL_STEP - WALL_RANGE;
+        vec3 fromBelow = d - below;
+        vec3 toAbove = above - d;
         float room = min(min(min(fromBelow.x, fromBelow.y), fromBelow.z), min(min(toAbove.x, toAbove.y), toAbove.z));
 
         float w = 1.0 - d2;
         w = w * w * smoothstep(-WALL_FADE_INSIDE, WALL_FADE_BEFORE, room);
         weightSum += w;
         densitySum += w * data.x;
-        lightSum += w * vec3(data.y, data.z, clamp(d.y / shape.w * 0.5 + 0.5, 0.0, 1.0));
-        depthSum += w * vec2(below.w, above.w);
+        lightSum += w * vec3(light, clamp(d.y / shape.w * 0.5 + 0.5, 0.0, 1.0));
+        depthSum += w * data.zw;
         offsetSum += w * vec2(dot(d, LightDirection.xyz), d.y);
     }
 
@@ -262,8 +308,9 @@ Field puffField(vec3 p) {
     return field;
 }
 
-// THE SAME FIELD WITHOUT THE LIGHTING OR WALLS, OVER EVERY PUFF THAT CAN SHADOW THE RAY.
-vec2 puffCoverage(vec3 p) {
+// THE SAME FIELD WITHOUT THE LIGHTING OR WALLS, OVER EVERY PUFF THAT CAN SHADOW THE RAY. p IS
+// WITHIN SHADOW_REACH OF THE VIEW RAY AT viewT.
+vec2 puffCoverage(vec3 p, float viewT) {
     float densitySum = 0.0;
     float weightSum = 0.0;
 
@@ -272,10 +319,14 @@ vec2 puffCoverage(vec3 p) {
             break;
         }
 
-        int i = hitPuff(k) * 4;
-        vec4 data = Puffs[i + 1];
-        vec3 d = p - Puffs[i].xyz;
-        float d2 = dot(d, d) * data.w;
+        if (abs(viewT - hitMid[k]) >= hitReach[k]) {
+            continue;
+        }
+
+        int i = hitPuff(k);
+        vec4 data = Puffs[i].data;
+        vec3 d = p - Puffs[i].shape.xyz;
+        float d2 = dot(d, d) * data.y;
         if (d2 >= 1.0) {
             continue;
         }
@@ -322,8 +373,8 @@ float gasDensity(vec3 wp, vec3 warp, float time, vec2 field, float height, float
 // CHEAPER DENSITY FOR SHADOW SAMPLES: NO DETAIL OCTAVE, AND IT REUSES THE VIEW SAMPLE'S
 // DOMAIN WARP INSTEAD OF FETCHING ITS OWN. THE WARP CHANGES OVER WARP_SCALE (4 BLOCKS),
 // WELL BEYOND SHADOW_REACH, SO SHADOWS STILL FOLLOW THE VISIBLE (WARPED) SHAPES.
-float shadowDensity(vec3 p, vec3 warp, float time) {
-    vec2 field = puffCoverage(p);
+float shadowDensity(vec3 p, float viewT, vec3 warp, float time) {
+    vec2 field = puffCoverage(p, viewT);
     if (field.x <= 0.002) {
         return 0.0;
     }
@@ -337,8 +388,36 @@ vec3 unprojectView(float deviceDepth) {
     return unproject(unprojectBase, unprojectDepth, deviceDepth);
 }
 
-bool isViewHit(uvec2 mask, int i) {
-    return (mask[i >> 5] & (1u << uint(i & 31))) != 0u;
+// ONE BIT PER RUN OF PUFFS (SEE RectEnds) WHOSE SCREEN BOUNDS HOLD THIS PIXEL. A RUN IS WHOLE
+// CLOUDS, AND PUFFS CLOSER THAN SHADOW_REACH ARE ALWAYS IN THE SAME CLOUD (CLUSTER_GAP IN
+// FartGasSimulation IS LARGER), SO NO OTHER RUN CAN ADD GAS OR SHADOW HERE.
+int runsAtPixel() {
+    vec2 ndc = (ProjMat * unprojectBase).xy;
+    int runs = 0;
+    for (int r = 0; r < MAX_RECTS; r++) {
+        vec4 b = runBounds[r];
+        if (all(greaterThanEqual(ndc, b.xy)) && all(lessThanEqual(ndc, b.zw))) {
+            runs |= 1 << r;
+        }
+    }
+
+    return runs;
+}
+
+int runStart(int r) {
+    return r == 0 ? 0 : rectEnd(r - 1);
+}
+
+// ONE BIT PER PUFF: WHETHER IT IS ON THE VIEW RAY'S HIT LIST.
+uint viewMask[MAX_PUFFS / 32];
+
+void setViewHit(int i, bool hit) {
+    uint bit = 1u << uint(i & 31);
+    viewMask[i >> 5] = hit ? viewMask[i >> 5] | bit : viewMask[i >> 5] & ~bit;
+}
+
+bool isViewHit(int i) {
+    return (viewMask[i >> 5] & (1u << uint(i & 31))) != 0u;
 }
 
 // A PIXEL WITH NO VISIBLE GAS. gasT IS WHERE TEMPORAL SMOOTHING REPROJECTS IT FROM.
@@ -356,6 +435,11 @@ void main() {
     for (int w = 0; w < MAX_HITS / 4; w++) {
         hitWords[w] = 0u;
     }
+    for (int w = 0; w < MAX_PUFFS / 32; w++) {
+        viewMask[w] = 0u;
+    }
+
+    int runs = runsAtPixel();
 
     vec3 ro;
     vec3 rd;
@@ -379,33 +463,71 @@ void main() {
     // WITHOUT GAS, TEMPORAL SMOOTHING REPROJECTS A PIXEL AS IF IT WERE AT THE SCENE.
     float emptyT = min(sceneT, 1e4);
 
-    // 1. BROAD PHASE: RAY / SPHERE AGAINST EVERY PUFF. THE CPU UPLOADS THE DENSEST FIRST,
-    // SO IF THE LIST FILLS UP IT'S THE FAINTEST PUFFS THAT GET LEFT OUT.
-    uvec2 viewMask = uvec2(0u);
-    for (int i = 0; i < MAX_PUFFS; i++) {
-        if (i >= puffCount || hitCount >= MAX_VIEW_HITS) {
-            break;
-        }
+    // 1. BROAD PHASE: RAY / SPHERE AGAINST THE PUFFS OF THE RUNS UNDER THIS PIXEL. ONCE THE LIST
+    // IS FULL, A PUFF THAT ADDS MORE GAS TO THIS RAY (DENSITY x LENGTH OF RAY INSIDE IT)
+    // REPLACES THE ONE THAT ADDS THE LEAST. KEEPING THE FIRST HITS INSTEAD WOULD LET A NEW,
+    // DENSE FART (UPLOADED FIRST) CROWD AN OLDER CLOUD BEHIND OR IN FRONT OF IT OFF THE RAY,
+    // ERASING IT THERE.
+    // WITH THE CAMERA IN THE GAS, ONLY THE NEAREST GAS IS MARCHED (SEE IMMERSED_REACH).
+    float immersion = AmbientColor.w;
+    float gasLimit = immersion > 0.0 ? min(sceneT, IMMERSED_REACH / immersion) : sceneT;
 
-        vec4 shape = Puffs[i * 4];
-        vec3 toCenter = shape.xyz - ro;
-        float b = dot(toCenter, rd);
-        float h = b * b - (dot(toCenter, toCenter) - shape.w * shape.w);
-        if (h <= 0.0) {
+    int weakest = -1;          // THE FULL LIST'S WEAKEST HIT (-1 = NOT YET FOUND)
+    float weakestGas = 0.0;
+    for (int r = 0; r < MAX_RECTS; r++) {
+        if ((runs & (1 << r)) == 0) {
             continue;
         }
 
-        h = sqrt(h);
-        float t0 = max(b - h, 0.0);
-        float t1 = min(b + h, sceneT);
-        if (t1 <= t0) {
-            continue;
-        }
+        int runEnd = min(rectEnd(r), puffCount);
+        for (int i = runStart(r); i < runEnd; i++) {
+            vec4 shape = Puffs[i].shape;
+            vec3 toCenter = shape.xyz - ro;
+            float b = dot(toCenter, rd);
+            float h = b * b - (dot(toCenter, toCenter) - shape.w * shape.w);
+            if (h <= 0.0) {
+                continue;
+            }
 
-        spanStart[hitCount] = t0;
-        spanEnd[hitCount] = t1;
-        viewMask[i >> 5] |= 1u << uint(i & 31);
-        addHit(i);
+            h = sqrt(h);
+            float t0 = max(b - h, 0.0);
+            float t1 = min(b + h, gasLimit);
+            if (t1 <= t0) {
+                continue;
+            }
+
+            if (hitCount < MAX_VIEW_HITS) {
+                spanStart[hitCount] = t0;
+                spanEnd[hitCount] = t1;
+                setViewHit(i, true);
+                setWindow(hitCount, toCenter, b, shape.w);
+                addHit(i);
+                continue;
+            }
+
+            if (weakest < 0) {
+                weakestGas = 1e30;
+                for (int k = 0; k < MAX_VIEW_HITS; k++) {
+                    float gas = Puffs[hitPuff(k)].data.x * (spanEnd[k] - spanStart[k]);
+                    if (gas < weakestGas) {
+                        weakestGas = gas;
+                        weakest = k;
+                    }
+                }
+            }
+
+            if (Puffs[i].data.x * (t1 - t0) <= weakestGas) {
+                continue;
+            }
+
+            setViewHit(hitPuff(weakest), false);
+            setViewHit(i, true);
+            spanStart[weakest] = t0;
+            spanEnd[weakest] = t1;
+            setWindow(weakest, toCenter, b, shape.w);
+            setHit(weakest, i);
+            weakest = -1;
+        }
     }
 
     viewHitCount = hitCount;
@@ -468,32 +590,45 @@ void main() {
 
     // SHADOW-ONLY PUFFS: OFF THE VIEW RAY BUT CLOSE ENOUGH TO THE MARCHED PART OF IT THAT A
     // SHADOW SAMPLE CAN LAND INSIDE THEM. WITHOUT THESE, SHADOWS WOULD DEPEND ON WHICH
-    // PUFFS HAPPEN TO BE IN VIEW AND CHANGE AS THE CAMERA TURNS.
-    if (directStrength > 0.0) {
-        for (int i = 0; i < MAX_PUFFS; i++) {
-            if (i >= puffCount || hitCount >= MAX_HITS) {
+    // PUFFS HAPPEN TO BE IN VIEW AND CHANGE AS THE CAMERA TURNS. ONLY NEEDED WHERE THE SHADOW
+    // MARCH RUNS (NOT ALL THE WAY INSIDE THE GAS, NOR PAST DETAIL_LOD_END).
+    if (directStrength > 0.0 && immersion < 1.0 && tStart < DETAIL_LOD_END) {
+        for (int r = 0; r < MAX_RECTS; r++) {
+            if (hitCount >= MAX_HITS) {
                 break;
             }
 
-            if (isViewHit(viewMask, i)) {
+            if ((runs & (1 << r)) == 0) {
                 continue;
             }
 
-            vec4 shape = Puffs[i * 4];
-            float reach = shape.w + SHADOW_REACH;
-            vec3 toCenter = shape.xyz - ro;
-            float b = dot(toCenter, rd);
-            float h = b * b - (dot(toCenter, toCenter) - reach * reach);
-            if (h <= 0.0) {
-                continue;
-            }
+            int runEnd = min(rectEnd(r), puffCount);
+            for (int i = runStart(r); i < runEnd; i++) {
+                if (hitCount >= MAX_HITS) {
+                    break;
+                }
 
-            h = sqrt(h);
-            if (b + h <= tStart || b - h >= tEnd) {
-                continue;
-            }
+                if (isViewHit(i)) {
+                    continue;
+                }
 
-            addHit(i);
+                vec4 shape = Puffs[i].shape;
+                float reach = shape.w + SHADOW_REACH;
+                vec3 toCenter = shape.xyz - ro;
+                float b = dot(toCenter, rd);
+                float h = b * b - (dot(toCenter, toCenter) - reach * reach);
+                if (h <= 0.0) {
+                    continue;
+                }
+
+                h = sqrt(h);
+                if (b + h <= tStart || b - h >= tEnd) {
+                    continue;
+                }
+
+                setWindow(hitCount, toCenter, b, shape.w);
+                addHit(i);
+            }
         }
     }
 
@@ -550,7 +685,7 @@ void main() {
         }
 
         vec3 p = ro + rd * t;
-        Field field = puffField(p);
+        Field field = puffField(p, t);
 
         if (field.coverage > 0.002) {
             vec3 wp = p + NoiseOrigin.xyz;
@@ -573,18 +708,26 @@ void main() {
                 if (sunVisibility > 0.001) {
                     if ((litSamples & 1) == 0) {
                         // 3A. A SHORT MARCH TOWARD THE LIGHT WITH GEOMETRICALLY GROWING STEPS, FOR
-                        // THE SELF-SHADOWING OF THE NOISE'S BILLOWS AND WISPS.
-                        cachedOpticalDepth = 0.0;
-                        float lightStep = firstShadowStep;
-                        float lightT = lightStep * (0.5 + jitter * 0.5);
-                        for (int l = 0; l < MAX_SHADOW_STEPS; l++) {
-                            if (l >= shadowSteps) {
-                                break;
+                        // THE SELF-SHADOWING OF THE NOISE'S BILLOWS AND WISPS. FAR AWAY, OR WITH THE
+                        // CAMERA IN THE GAS, THE SMOOTH FIELD AT THIS SAMPLE STANDS IN FOR IT (SEE
+                        // DETAIL_LOD_END AND IMMERSED_REACH).
+                        float shadowLod = max(smoothstep(DETAIL_LOD_START, DETAIL_LOD_END, t), immersion);
+                        cachedOpticalDepth = smoothDensity * SHADOW_REACH * GasColor.w;
+                        if (shadowLod < 1.0) {
+                            float marched = 0.0;
+                            float lightStep = firstShadowStep;
+                            float lightT = lightStep * (0.5 + jitter * 0.5);
+                            for (int l = 0; l < MAX_SHADOW_STEPS; l++) {
+                                if (l >= shadowSteps) {
+                                    break;
+                                }
+
+                                marched += shadowDensity(p + lightDir * lightT, t, warp, time) * lightStep;
+                                lightStep *= SHADOW_GROWTH;
+                                lightT += lightStep;
                             }
 
-                            cachedOpticalDepth += shadowDensity(p + lightDir * lightT, warp, time) * lightStep;
-                            lightStep *= SHADOW_GROWTH;
-                            lightT += lightStep;
+                            cachedOpticalDepth = mix(marched, cachedOpticalDepth, shadowLod);
                         }
 
                         // 3B. THE REST OF THE WAY OUT OF THE CLOUD FROM THE CPU'S PER-PUFF DEPTHS:
