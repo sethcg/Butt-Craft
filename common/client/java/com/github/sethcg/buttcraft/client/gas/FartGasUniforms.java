@@ -33,7 +33,8 @@ public final class FartGasUniforms {
     // DOESN'T JUMP WHEN TIME WRAPS.
     private static final double TIME_PERIOD_SECONDS = 2000.0;
 
-    private static final Vector3fc GAS_ALBEDO = new Vector3f(0.64F, 0.74F, 0.40F);
+    // HOW MUCH LIGHT THE GAS SCATTERS BACK. LOWER IS DARKER, WITHOUT CHANGING HOW OPAQUE IT IS.
+    private static final Vector3fc GAS_ALBEDO = new Vector3f(0.48F, 0.63F, 0.31F);
     private static final float GAS_DENSITY = 1.6F;
 
     // PUFFS FAINTER THAN THIS ARE NOT UPLOADED. THE SHADER STOPS COLLECTING SHADOW-ONLY PUFFS
