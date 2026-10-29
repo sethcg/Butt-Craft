@@ -132,15 +132,14 @@ public final class FartClouds {
 
     /**
      * SPAWNS A CLOUD THAT SPREADS OUT EVENLY AROUND A POINT INSTEAD OF BEHIND A PLAYER.
-     * THE OWNER (IF ANY) GETS THE CREDIT BUT ISN'T IMMUNE TO IT. size SCALES HOW FAR IT
-     * SPREADS (1 = A NORMAL FART), stenchTicks IS HOW LONG EACH DOSE OF STENCH LASTS.
+     * THE OWNER (IF ANY) GETS THE CREDIT BUT ISN'T IMMUNE TO IT. stenchTicks IS HOW LONG
+     * EACH DOSE OF STENCH LASTS.
      */
     public static void spawnBurst(
         ServerLevel level,
         Vec3 center,
         @Nullable Entity owner,
         int lifetimeTicks,
-        float size,
         int stenchTicks
     ) {
         add(new Cloud(
@@ -152,7 +151,7 @@ public final class FartClouds {
             center,
             Vec3.ZERO,
             0.0,
-            BURST_SPREAD * size
+            BURST_SPREAD
         ));
     }
 
@@ -190,14 +189,14 @@ public final class FartClouds {
         long currentTick = level.getGameTime();
         Holder<DamageType> gasDamage = FartGasDamageSource.type(level);
 
-        for (int i = CLOUDS.size() - 1; i >= 0; i--) {
-            Cloud cloud = CLOUDS.get(i);
+        for (int cloudIndex = CLOUDS.size() - 1; cloudIndex >= 0; cloudIndex--) {
+            Cloud cloud = CLOUDS.get(cloudIndex);
             if (cloud.dimension != level.dimension()) {
                 continue;
             }
 
             if (cloud.age >= cloud.lifetimeTicks) {
-                CLOUDS.remove(i);
+                CLOUDS.remove(cloudIndex);
                 continue;
             }
 

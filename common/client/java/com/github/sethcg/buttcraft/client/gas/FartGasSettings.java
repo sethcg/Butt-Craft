@@ -23,8 +23,8 @@ import net.minecraft.util.Mth;
  * <p>HOW MUCH GAS:
  * <ul>
  *   <li>MAX PUFFS: BEYOND IT, THE MOST-OVERLAPPING PUFFS MERGE INTO BIGGER ONES. A FART
- *   RELEASES {@link FartGasSimulation#PUFFS_PER_FART} PUFFS. EVERY PIXEL TESTS EVERY PUFF,
- *   AND EVERY SAMPLE LOOPS OVER THE PUFFS ON ITS RAY, SO FEWER PUFFS ARE CHEAPER.</li>
+ *   RELEASES {@code EMIT_TICKS} PUFFS (SEE {@link FartGasSimulation}). EVERY PIXEL TESTS
+ *   EVERY PUFF, AND EVERY SAMPLE LOOPS OVER THE PUFFS ON ITS RAY, SO FEWER PUFFS ARE CHEAPER.</li>
  * </ul>
  *
  * <p>HOW IT LOOKS:
@@ -141,8 +141,8 @@ public final class FartGasSettings {
         Properties properties = new Properties();
         try (Reader reader = Files.newBufferedReader(path)) {
             properties.load(reader);
-        } catch (IOException e) {
-            LOGGER.warn("CAN'T READ {}, USING DEFAULTS.", path, e);
+        } catch (IOException exception) {
+            LOGGER.warn("CAN'T READ {}, USING DEFAULTS.", path, exception);
             current = DEFAULTS;
             return;
         }
@@ -182,7 +182,7 @@ public final class FartGasSettings {
 
         try {
             return Integer.parseInt(value.trim());
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException exception) {
             LOGGER.warn("BAD SETTING FORMAT: {}={} IN {}, USING {}.", key, value, FILE_NAME, fallback);
             return fallback;
         }
@@ -218,8 +218,8 @@ public final class FartGasSettings {
             try (Writer writer = Files.newBufferedWriter(path)) {
                 properties.store(writer, "ButtCraft gas settings (also in Video Settings)");
             }
-        } catch (IOException e) {
-            LOGGER.warn("CAN'T SAVE {}, CHANGES LAST UNTIL RESTART.", path, e);
+        } catch (IOException exception) {
+            LOGGER.warn("CAN'T SAVE {}, CHANGES LAST UNTIL RESTART.", path, exception);
         }
     }
 

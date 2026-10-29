@@ -2,7 +2,6 @@ package com.github.sethcg.buttcraft.client.gas;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.OptionalLong;
 
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -19,10 +18,8 @@ import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.CommandEncoder;
-import com.mojang.renderpearl.api.commands.GpuQueryPool;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
-import com.mojang.renderpearl.api.device.GpuDevice;
 import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
 import com.mojang.renderpearl.api.pipeline.BlendFunction;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
@@ -84,14 +81,14 @@ public final class FartGasRenderer {
     private static final Identifier SHAPE_TEXTURE = ButtCraft.id("textures/fart_gas_shape.png");
 
     // THE MARCH INTO THE CLEARED REDUCED-RESOLUTION TARGETS (NO BLENDING)...
-    public static final RenderPipeline PIPELINE = RenderPipelines.registerOptional(
+    private static final RenderPipeline PIPELINE = RenderPipelines.registerOptional(
         marchPipeline("pipeline/fart_gas")
             .withColorTargetState(0, new ColorTargetState(Optional.empty(), GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_ALL))
             .withColorTargetState(1, new ColorTargetState(Optional.empty(), GpuFormat.RG32_FLOAT, ColorTargetState.WRITE_ALL))
             .build());
 
     // ...OR BLENDED STRAIGHT ONTO THE SCENE (FULL RESOLUTION WITHOUT TEMPORAL SMOOTHING ONLY).
-    public static final RenderPipeline DIRECT_PIPELINE = RenderPipelines.registerOptional(
+    private static final RenderPipeline DIRECT_PIPELINE = RenderPipelines.registerOptional(
         marchPipeline("pipeline/fart_gas_direct")
             .withShaderDefine("FART_GAS_DIRECT")
             .withShaderDefine("FART_GAS_SINGLE_RECT")
@@ -101,7 +98,7 @@ public final class FartGasRenderer {
                 ColorTargetState.WRITE_ALL))
             .build());
 
-    public static final RenderPipeline RESOLVE_PIPELINE = RenderPipelines.registerOptional(
+    private static final RenderPipeline RESOLVE_PIPELINE = RenderPipelines.registerOptional(
         screenPipeline("pipeline/fart_gas_resolve", "core/fart_gas_resolve")
             .withBindGroupLayout(BindGroupLayout.builder()
                 .withUniform("FartGasInfo", UniformType.UNIFORM_BUFFER)
@@ -113,7 +110,7 @@ public final class FartGasRenderer {
             .withColorTargetState(new ColorTargetState(Optional.empty(), GpuFormat.RGBA16_FLOAT, ColorTargetState.WRITE_ALL))
             .build());
 
-    public static final RenderPipeline COMPOSITE_PIPELINE = RenderPipelines.registerOptional(
+    private static final RenderPipeline COMPOSITE_PIPELINE = RenderPipelines.registerOptional(
         screenPipeline("pipeline/fart_gas_composite", "core/fart_gas_composite")
             .withShaderDefine("FART_GAS_SINGLE_RECT")
             .withBindGroupLayout(BindGroupLayout.builder()
@@ -128,7 +125,7 @@ public final class FartGasRenderer {
                 ColorTargetState.WRITE_ALL))
             .build());
 
-    public static final RenderPipeline CAPTURE_PIPELINE = RenderPipelines.registerOptional(
+    private static final RenderPipeline CAPTURE_PIPELINE = RenderPipelines.registerOptional(
         RenderPipeline.builder()
             .withLocation(ButtCraft.id("pipeline/fart_gas_capture"))
             .withVertexShader(ButtCraft.id("core/fart_gas_capture"))
@@ -148,11 +145,6 @@ public final class FartGasRenderer {
     // THE MARCH'S JITTER REPEATS AFTER THIS MANY FRAMES (A POWER OF TWO).
     private static final int JITTER_FRAMES = 64;
 
-    // GPU TIMING FOR THE F3 ENTRY: THREE TIMESTAMPS A FRAME (START, AFTER THE MARCH, END) IN A
-    // RING OF TIMER_FRAMES, READ BACK ONCE THE GPU HAS REACHED THEM, SO NOTHING WAITS ON IT.
-    private static final int TIMER_FRAMES = 4;
-    private static final int TIMESTAMPS = 3;
-
     private final FartGasSimulation simulation;
     private @Nullable MappableRingBuffer ubo;
     private @Nullable TextureTarget gasTarget;
@@ -168,19 +160,11 @@ public final class FartGasRenderer {
     private Vec3 previousCameraPos = Vec3.ZERO;
     private final Matrix4f previousViewRotation = new Matrix4f();
 
-    private @Nullable GpuQueryPool timestamps;
-    private final boolean[] timerPending = new boolean[TIMER_FRAMES];
-    private int timerFrame;
-
     private boolean warnedMissingPipeline;
     private boolean warnedMissingTarget;
 
     public FartGasRenderer(FartGasSimulation simulation) {
         this.simulation = simulation;
-    }
-
-    /** LOADS THIS CLASS SO THE PIPELINES ARE REGISTERED BEFORE THE FIRST RESOURCE RELOAD COMPILES SHADERS. */
-    public static void initialize() {
     }
 
     public void render(LevelRenderContext context) {
@@ -190,7 +174,6 @@ public final class FartGasRenderer {
 
         List<FartGasSimulation.Puff> puffs = this.simulation.puffs();
         if (puffs.isEmpty()) {
-            FartGasDebug.recordUpload(0, 0, 0);
             return;
         }
 
@@ -264,8 +247,6 @@ public final class FartGasRenderer {
             upload = FartGasUniforms.write(view.data(), levelState, puffs, quality, lighting, frameTemporal);
         }
 
-        FartGasDebug.recordUpload(upload.puffs(), upload.rects(), upload.largestRun());
-
         // EVERY PUFF IS TOO FAINT TO SEE (E.G. THE TAIL END OF A FADING CLOUD).
         if (upload.puffs() == 0) {
             return;
@@ -288,8 +269,8 @@ public final class FartGasRenderer {
             }
 
             if (temporal) {
-                for (int i = 0; i < 2; i++) {
-                    this.historyTargets[i] = sized(this.historyTargets[i], "ButtCraft fart gas history " + i, width, height, GpuFormat.RGBA16_FLOAT);
+                for (int historySlot = 0; historySlot < 2; historySlot++) {
+                    this.historyTargets[historySlot] = sized(this.historyTargets[historySlot], "ButtCraft fart gas history " + historySlot, width, height, GpuFormat.RGBA16_FLOAT);
                 }
                 this.projectionTarget = sized(this.projectionTarget, "ButtCraft fart gas projection", 4, 1, GpuFormat.RGBA32_FLOAT);
                 historyView = this.historyTargets[this.historyIndex].getColorTextureView();
@@ -304,7 +285,6 @@ public final class FartGasRenderer {
         }
 
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        int timer = this.beginTimer(encoder);
         GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         GpuSampler linear = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         // ONE QUAD (6 VERTICES) PER SCREEN RECTANGLE IN THE PASSES THAT DON'T BLEND.
@@ -327,9 +307,7 @@ public final class FartGasRenderer {
             pass.draw(direct ? 6 : rectVertices, 1, 0, 0);
         }
 
-        this.timestamp(encoder, timer, 1);
         if (direct) {
-            this.timestamp(encoder, timer, 2);
             this.ubo.rotate();
             return;
         }
@@ -377,56 +355,7 @@ public final class FartGasRenderer {
             this.historyValid = true;
         }
 
-        this.timestamp(encoder, timer, 2);
-
         this.ubo.rotate();
-    }
-
-    /**
-     * HANDS FINISHED FRAMES' GPU TIMES TO THE F3 ENTRY, THEN WRITES THIS FRAME'S START TIMESTAMP.
-     * RETURNS THE FRAME'S FIRST TIMESTAMP INDEX, OR -1 WHEN NOT TIMING (THE ENTRY IS HIDDEN, OR
-     * THE GPU IS SO FAR BEHIND THAT THE NEXT SLOT HASN'T BEEN READ YET).
-     */
-    private int beginTimer(CommandEncoder encoder) {
-        if (!FartGasDebug.shown()) {
-            return -1;
-        }
-
-        GpuDevice device = RenderSystem.getDevice();
-        if (this.timestamps == null) {
-            this.timestamps = device.createTimestampQueryPool(TIMER_FRAMES * TIMESTAMPS);
-        }
-
-        // TIMESTAMP TICKS -> NANOSECONDS -> MILLISECONDS
-        double toMillis = device.getDeviceInfo().timestampPeriod() / 1.0E6;
-        for (int f = 0; f < TIMER_FRAMES; f++) {
-            if (!this.timerPending[f]) {
-                continue;
-            }
-
-            OptionalLong[] values = this.timestamps.getValues(f * TIMESTAMPS, TIMESTAMPS);
-            if (values[0].isPresent() && values[1].isPresent() && values[2].isPresent()) {
-                long start = values[0].getAsLong();
-                FartGasDebug.recordGpu((values[1].getAsLong() - start) * toMillis, (values[2].getAsLong() - start) * toMillis);
-                this.timerPending[f] = false;
-            }
-        }
-
-        int frame = this.timerFrame;
-        if (this.timerPending[frame]) {
-            return -1;
-        }
-
-        this.timerFrame = (frame + 1) % TIMER_FRAMES;
-        this.timerPending[frame] = true;
-        encoder.writeTimestamp(this.timestamps, frame * TIMESTAMPS);
-        return frame * TIMESTAMPS;
-    }
-
-    private void timestamp(CommandEncoder encoder, int timer, int index) {
-        if (timer >= 0 && this.timestamps != null) {
-            encoder.writeTimestamp(this.timestamps, timer + index);
-        }
     }
 
     private @Nullable CompiledRenderPipeline compiled(RenderPipeline pipeline) {
@@ -469,11 +398,6 @@ public final class FartGasRenderer {
             this.ubo = null;
         }
 
-        if (this.timestamps != null) {
-            this.timestamps.close();
-            this.timestamps = null;
-        }
-
         this.destroyTargets();
     }
 
@@ -484,8 +408,8 @@ public final class FartGasRenderer {
     }
 
     private void destroyHistory() {
-        for (int i = 0; i < 2; i++) {
-            this.historyTargets[i] = destroy(this.historyTargets[i]);
+        for (int historySlot = 0; historySlot < 2; historySlot++) {
+            this.historyTargets[historySlot] = destroy(this.historyTargets[historySlot]);
         }
 
         this.projectionTarget = destroy(this.projectionTarget);

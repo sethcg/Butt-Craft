@@ -41,9 +41,9 @@ layout(std140) uniform FartGasInfo {
     Puff Puffs[MAX_PUFFS];
 };
 
-// WHERE RUN r OF PUFFS ENDS (EXCLUSIVE). RUN r STARTS WHERE RUN r - 1 ENDS (RUN 0 AT 0).
-int rectEnd(int r) {
-    return RectEnds[r >> 2][r & 3];
+// WHERE A RUN OF PUFFS ENDS (EXCLUSIVE). EACH RUN STARTS WHERE THE ONE BEFORE IT ENDS (RUN 0 AT 0).
+int rectEnd(int run) {
+    return RectEnds[run >> 2][run & 3];
 }
 
 float deviceToNdcDepth(float deviceDepth) {
@@ -57,8 +57,8 @@ float deviceToNdcDepth(float deviceDepth) {
 // VIEW-SPACE POSITION FOR A DEVICE DEPTH (REVERSED-Z: 1 = NEAR, 0 = FAR), GIVEN THE PIXEL'S
 // UNPROJECTION TERMS FROM fart_gas.vsh.
 vec3 unproject(vec4 base, vec4 depthColumn, float deviceDepth) {
-    vec4 h = base + deviceToNdcDepth(deviceDepth) * depthColumn;
-    return h.xyz / h.w;
+    vec4 homogeneous = base + deviceToNdcDepth(deviceDepth) * depthColumn;
+    return homogeneous.xyz / homogeneous.w;
 }
 
 // THE PIXEL'S VIEW RAY IN CAMERA-RELATIVE WORLD SPACE: FROM THE NEAR PLANE THROUGH A FAR POINT.

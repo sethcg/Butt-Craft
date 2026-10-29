@@ -20,7 +20,7 @@ import org.jspecify.annotations.Nullable;
  */
 public final class FartGasDamageSource extends DamageSource {
 
-    public static final ResourceKey<DamageType> TYPE = ResourceKey.create(
+    private static final ResourceKey<DamageType> TYPE = ResourceKey.create(
         Registries.DAMAGE_TYPE,
         ButtCraft.id("fart_gas")
     );

@@ -110,22 +110,20 @@ public class ButtCraft implements ModInitializer {
     /**
      * RELEASES A FART THAT ISN'T COMING OUT OF A PLAYER (E.G. A SPLASH POTION BREAKING).
      * THE GAS SPREADS OUT EVENLY AROUND THE POINT AND LINGERS FOR lifetimeTicks (20 TICKS =
-     * 1 SECOND), SPREADS OUT size TIMES AS FAR (1 = A NORMAL FART) AND EACH DOSE GIVES
-     * stenchTicks OF STENCH I. THE OWNER (IF ANY) GETS THE CREDIT.
+     * 1 SECOND), AND EACH DOSE GIVES stenchTicks OF STENCH I. THE OWNER (IF ANY) GETS THE CREDIT.
      */
     public static void fartBurst(
         ServerLevel level,
         Vec3 pos,
         @Nullable Entity owner,
         int lifetimeTicks,
-        float size,
         int stenchTicks
     ) {
 
         // LEAVE A STINKY CLOUD WHERE THE GAS WILL BE
-        FartClouds.spawnBurst(level, pos, owner, lifetimeTicks, size, stenchTicks);
+        FartClouds.spawnBurst(level, pos, owner, lifetimeTicks, stenchTicks);
 
-        broadcast(level, pos, FartPayload.burst(pos, lifetimeTicks, size, level.getRandom().nextInt()));
+        broadcast(level, pos, FartPayload.burst(pos, lifetimeTicks, level.getRandom().nextInt()));
     }
 
     // EVERY PLAYER WITHIN EARSHOT HEARS AND SEES THE FART
@@ -168,23 +166,23 @@ public class ButtCraft implements ModInitializer {
             }
 
             // CALCULATE HORIZONTAL DIRECTION FROM THE PLAYER TO THE ENTITY
-            double dx = entity.getX() - player.getX();
-            double dz = entity.getZ() - player.getZ();
+            double offsetX = entity.getX() - player.getX();
+            double offsetZ = entity.getZ() - player.getZ();
 
-            double distance = Math.sqrt(dx * dx + dz * dz);
+            double distance = Math.sqrt(offsetX * offsetX + offsetZ * offsetZ);
 
             // ENTITY ON TOP OF PLAYER, AVOID ZERO DIVIDE
             if (distance < 0.001) {
-                dx = 0.0;
-                dz = 1.0;
+                offsetX = 0.0;
+                offsetZ = 1.0;
                 distance = 1.0;
             }
 
             // NORMALIZE THE DIRECTION
-            dx /= distance;
-            dz /= distance;
+            offsetX /= distance;
+            offsetZ /= distance;
 
-            double direction = dx * backwardX + dz * backwardZ;
+            double direction = offsetX * backwardX + offsetZ * backwardZ;
             double knockbackMultiplier = 0.75 + (direction * 0.25);
 
             double knockback = FART_KNOCKBACK * knockbackMultiplier;
@@ -192,9 +190,9 @@ public class ButtCraft implements ModInitializer {
 
             // APPLY KNOCKBACK (X, Y, Z)
             entity.push(
-                dx * knockback,
+                offsetX * knockback,
                 Math.max(verticalKnockback, entity.getDeltaMovement().y),
-                dz * knockback
+                offsetZ * knockback
             );
         }
     }

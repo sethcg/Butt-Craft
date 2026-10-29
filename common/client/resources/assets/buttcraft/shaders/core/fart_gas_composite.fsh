@@ -50,31 +50,31 @@ void main() {
     // LOW-RES TEXEL I COVERS FULL-RES PIXELS [N * I, N * I + N), SO THIS PIXEL SITS AT:
     vec2 gasPos = gl_FragCoord.xy / float(divisor) - 0.5;
     ivec2 base = ivec2(floor(gasPos));
-    vec2 f = gasPos - vec2(base);
+    vec2 fraction = gasPos - vec2(base);
 
     vec4 sum = vec4(0.0);
     float weightSum = 0.0;
     float haloFloor = 0.0;
-    for (int i = 0; i < 4; i++) {
-        ivec2 offset = ivec2(i & 1, i >> 1);
+    for (int tap = 0; tap < 4; tap++) {
+        ivec2 offset = ivec2(tap & 1, tap >> 1);
         ivec2 texel = clamp(base + offset, ivec2(0), gasSize - 1);
-        vec2 bilinear = mix(1.0 - f, f, vec2(offset));
-        float b = bilinear.x * bilinear.y;
+        vec2 bilinear = mix(1.0 - fraction, fraction, vec2(offset));
+        float bilinearWeight = bilinear.x * bilinear.y;
 
         vec4 tapGas = texelFetch(GasSampler, texel, 0);
         vec2 tapDistances = texelFetch(GasDistanceSampler, texel, 0).rg;
         float tapDistance = tapDistances.x;
         float relative = abs(tapDistance - centerDistance) / min(centerDistance, 1e5);
-        float w = b / (relative + DEPTH_WEIGHT_BIAS);
+        float weight = bilinearWeight / (relative + DEPTH_WEIGHT_BIAS);
         // Y IS THE GAS'S ABSORPTION-WEIGHTED DISTANCE, SO SOME OF IT LIES PAST THAT: KEEP A MARGIN.
         // (AN EMPTY TAP'S Y IS ITS SCENE, SKY = 0, NOT GAS: IT KEEPS THE FADE AS BEFORE.)
         bool gasInFront = tapGas.a > 0.0 && tapDistances.y * (1.0 + HALO_TOLERANCE) < centerDistance;
         if (tapDistance > centerDistance && !gasInFront) {
-            haloFloor += b / (HALO_TOLERANCE + DEPTH_WEIGHT_BIAS);
+            haloFloor += bilinearWeight / (HALO_TOLERANCE + DEPTH_WEIGHT_BIAS);
         }
 
-        sum += tapGas * w;
-        weightSum += w;
+        sum += tapGas * weight;
+        weightSum += weight;
     }
 
     vec4 gas = sum / max(max(weightSum, haloFloor), 1e-6);

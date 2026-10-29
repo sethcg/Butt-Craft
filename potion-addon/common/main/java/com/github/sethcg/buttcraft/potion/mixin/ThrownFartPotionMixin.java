@@ -37,7 +37,6 @@ public abstract class ThrownFartPotionMixin {
             FartPotions.impactPosition(hit),
             potion.getOwner(),
             thrown.cloudTicks(),
-            1.0F,
             thrown.stenchTicks()
         );
 

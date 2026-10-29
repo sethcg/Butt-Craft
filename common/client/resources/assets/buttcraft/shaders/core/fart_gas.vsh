@@ -39,60 +39,60 @@ const float NEAR_W = 0.05;
 
 const vec4 EMPTY_RECT = vec4(1.0, 1.0, -1.0, -1.0);
 
-vec4 unionRect(vec4 a, vec4 b) {
-    return vec4(min(a.xy, b.xy), max(a.zw, b.zw));
+vec4 unionRect(vec4 rectA, vec4 rectB) {
+    return vec4(min(rectA.xy, rectB.xy), max(rectA.zw, rectB.zw));
 }
 
-float rectArea(vec4 r) {
-    vec2 size = max(r.zw - r.xy, vec2(0.0));
+float rectArea(vec4 rect) {
+    vec2 size = max(rect.zw - rect.xy, vec2(0.0));
     return size.x * size.y;
 }
 
-// EXACT NDC BOUNDS OF A SPHERE (VIEW-SPACE CENTER c, RADIUS r) THAT DOESN'T CROSS THE EYE PLANE.
+// EXACT NDC BOUNDS OF A SPHERE (VIEW-SPACE center, radius) THAT DOESN'T CROSS THE EYE PLANE.
 // IN HOMOGENEOUS SCREEN SPACE THE SPHERE'S OUTLINE IS THE CONIC WITH DUAL C = M Q M^T, WHERE M
 // IS PROJMAT'S X / Y / W ROWS AND Q THE SPHERE'S DUAL QUADRIC. A VERTICAL LINE x = X TOUCHES IT
 // WHERE C00 - 2 X C02 + X^2 C22 = 0 (AND THE SAME FOR y). WORKS FOR ANY PROJMAT, BOBBING
 // INCLUDED. C22 < 0 EXACTLY WHEN THE SPHERE IS CLEAR OF THE EYE PLANE.
-vec4 sphereRect(vec3 c, float r, vec4 k, float c22) {
-    vec3 mx = vec3(ProjMat[0][0], ProjMat[1][0], ProjMat[2][0]);
-    vec3 my = vec3(ProjMat[0][1], ProjMat[1][1], ProjMat[2][1]);
-    vec3 mw = vec3(ProjMat[0][3], ProjMat[1][3], ProjMat[2][3]);
-    float r2 = r * r;
-    float c00 = r2 * dot(mx, mx) - k.x * k.x;
-    float c02 = r2 * dot(mx, mw) - k.x * k.w;
-    float c11 = r2 * dot(my, my) - k.y * k.y;
-    float c12 = r2 * dot(my, mw) - k.y * k.w;
-    vec2 root = sqrt(max(vec2(c02 * c02 - c00 * c22, c12 * c12 - c11 * c22), vec2(0.0)));
-    vec2 a = (vec2(c02, c12) - root) / c22;
-    vec2 b = (vec2(c02, c12) + root) / c22;
-    return vec4(min(a, b), max(a, b));
+vec4 sphereRect(vec3 center, float radius, vec4 clipCenter, float conic22) {
+    vec3 rowX = vec3(ProjMat[0][0], ProjMat[1][0], ProjMat[2][0]);
+    vec3 rowY = vec3(ProjMat[0][1], ProjMat[1][1], ProjMat[2][1]);
+    vec3 rowW = vec3(ProjMat[0][3], ProjMat[1][3], ProjMat[2][3]);
+    float radiusSquared = radius * radius;
+    float conic00 = radiusSquared * dot(rowX, rowX) - clipCenter.x * clipCenter.x;
+    float conic02 = radiusSquared * dot(rowX, rowW) - clipCenter.x * clipCenter.w;
+    float conic11 = radiusSquared * dot(rowY, rowY) - clipCenter.y * clipCenter.y;
+    float conic12 = radiusSquared * dot(rowY, rowW) - clipCenter.y * clipCenter.w;
+    vec2 root = sqrt(max(vec2(conic02 * conic02 - conic00 * conic22, conic12 * conic12 - conic11 * conic22), vec2(0.0)));
+    vec2 edgeA = (vec2(conic02, conic12) - root) / conic22;
+    vec2 edgeB = (vec2(conic02, conic12) + root) / conic22;
+    return vec4(min(edgeA, edgeB), max(edgeA, edgeB));
 }
 
 // CONSERVATIVE NDC BOUNDS OF A SPHERE THAT CROSSES THE EYE PLANE: ITS VIEW-SPACE BOX, CLIPPED
 // AT w = NEAR_W. THE CLIPPED BOX'S CORNERS ARE THE BOX CORNERS IN FRONT PLUS WHERE ITS EDGES
 // CROSS THE PLANE, SO GAS OFF TO ONE SIDE ONLY COVERS THAT SIDE OF THE SCREEN.
-vec4 clippedBoxRect(vec3 c, float r) {
+vec4 clippedBoxRect(vec3 center, float radius) {
     vec4 clip[8];
-    for (int i = 0; i < 8; i++) {
-        vec3 corner = vec3(i & 1, (i >> 1) & 1, (i >> 2) & 1) * 2.0 - 1.0;
-        clip[i] = ProjMat * vec4(c + corner * r, 1.0);
+    for (int cornerIndex = 0; cornerIndex < 8; cornerIndex++) {
+        vec3 corner = vec3(cornerIndex & 1, (cornerIndex >> 1) & 1, (cornerIndex >> 2) & 1) * 2.0 - 1.0;
+        clip[cornerIndex] = ProjMat * vec4(center + corner * radius, 1.0);
     }
 
     vec4 rect = EMPTY_RECT;
-    for (int i = 0; i < 8; i++) {
-        if (clip[i].w > NEAR_W) {
-            vec2 ndc = clip[i].xy / clip[i].w;
+    for (int cornerIndex = 0; cornerIndex < 8; cornerIndex++) {
+        if (clip[cornerIndex].w > NEAR_W) {
+            vec2 ndc = clip[cornerIndex].xy / clip[cornerIndex].w;
             rect = unionRect(rect, vec4(ndc, ndc));
         }
 
         // THE THREE EDGES FROM THIS CORNER TOWARD ITS HIGHER NEIGHBOURS (EACH EDGE ONCE).
         for (int axis = 0; axis < 3; axis++) {
-            int j = i | (1 << axis);
-            if (j == i || (clip[i].w > NEAR_W) == (clip[j].w > NEAR_W)) {
+            int neighbourIndex = cornerIndex | (1 << axis);
+            if (neighbourIndex == cornerIndex || (clip[cornerIndex].w > NEAR_W) == (clip[neighbourIndex].w > NEAR_W)) {
                 continue;
             }
 
-            vec4 cut = mix(clip[i], clip[j], (NEAR_W - clip[i].w) / (clip[j].w - clip[i].w));
+            vec4 cut = mix(clip[cornerIndex], clip[neighbourIndex], (NEAR_W - clip[cornerIndex].w) / (clip[neighbourIndex].w - clip[cornerIndex].w));
             vec2 ndc = cut.xy / NEAR_W;
             rect = unionRect(rect, vec4(ndc, ndc));
         }
@@ -104,21 +104,21 @@ vec4 clippedBoxRect(vec3 c, float r) {
 // NDC BOUNDS OF PUFFS [first, end).
 vec4 puffRect(int first, int end, mat3 worldToView) {
     vec4 rect = EMPTY_RECT;
-    for (int n = 0; n < MAX_PUFFS; n++) {
-        int i = first + n;
-        if (i >= end) {
+    for (int runOffset = 0; runOffset < MAX_PUFFS; runOffset++) {
+        int puffIndex = first + runOffset;
+        if (puffIndex >= end) {
             break;
         }
 
-        vec4 shape = Puffs[i].shape;
+        vec4 shape = Puffs[puffIndex].shape;
         vec3 center = worldToView * shape.xyz;
-        vec4 k = ProjMat * vec4(center, 1.0);
-        vec3 mw = vec3(ProjMat[0][3], ProjMat[1][3], ProjMat[2][3]);
-        float c22 = shape.w * shape.w * dot(mw, mw) - k.w * k.w;
-        if (c22 < 0.0) {
+        vec4 clipCenter = ProjMat * vec4(center, 1.0);
+        vec3 rowW = vec3(ProjMat[0][3], ProjMat[1][3], ProjMat[2][3]);
+        float conic22 = shape.w * shape.w * dot(rowW, rowW) - clipCenter.w * clipCenter.w;
+        if (conic22 < 0.0) {
             // CLEAR OF THE EYE PLANE: SKIP IT IF IT IS ENTIRELY BEHIND THE CAMERA.
-            if (k.w > 0.0) {
-                rect = unionRect(rect, sphereRect(center, shape.w, k, c22));
+            if (clipCenter.w > 0.0) {
+                rect = unionRect(rect, sphereRect(center, shape.w, clipCenter, conic22));
             }
         } else {
             rect = unionRect(rect, clippedBoxRect(center, shape.w));
@@ -137,16 +137,16 @@ void main() {
     // THEM THE SAME WAY, SO THE QUADS AGREE.
     int rectCount = clamp(Frame.y, 1, MAX_RECTS);
     vec4 rects[MAX_RECTS];
-    for (int r = 0; r < MAX_RECTS; r++) {
-        int first = r == 0 ? 0 : rectEnd(r - 1);
-        rects[r] = r < rectCount ? puffRect(first, min(rectEnd(r), puffCount), worldToView) : EMPTY_RECT;
-        runBounds[r] = rects[r];
+    for (int run = 0; run < MAX_RECTS; run++) {
+        int first = run == 0 ? 0 : rectEnd(run - 1);
+        rects[run] = run < rectCount ? puffRect(first, min(rectEnd(run), puffCount), worldToView) : EMPTY_RECT;
+        runBounds[run] = rects[run];
     }
 
     #ifdef FART_GAS_SINGLE_RECT
     vec4 bounds = EMPTY_RECT;
-    for (int r = 0; r < MAX_RECTS; r++) {
-        bounds = unionRect(bounds, rects[r]);
+    for (int run = 0; run < MAX_RECTS; run++) {
+        bounds = unionRect(bounds, rects[run]);
     }
     #else
     // TWO RECTANGLES MERGE WHEN THEIR UNION IS NO BIGGER THAN BOTH OF THEM: MARCHING THE
@@ -155,12 +155,12 @@ void main() {
     // RECTANGLE, SO THAT TAKES AT MOST MAX_RECTS PASSES.
     for (int pass = 0; pass < MAX_RECTS; pass++) {
         bool merged = false;
-        for (int a = 0; a < MAX_RECTS; a++) {
-            for (int b = a + 1; b < MAX_RECTS; b++) {
-                vec4 both = unionRect(rects[a], rects[b]);
-                if (rectArea(rects[b]) > 0.0 && rectArea(both) <= rectArea(rects[a]) + rectArea(rects[b])) {
-                    rects[a] = both;
-                    rects[b] = EMPTY_RECT;
+        for (int rectA = 0; rectA < MAX_RECTS; rectA++) {
+            for (int rectB = rectA + 1; rectB < MAX_RECTS; rectB++) {
+                vec4 both = unionRect(rects[rectA], rects[rectB]);
+                if (rectArea(rects[rectB]) > 0.0 && rectArea(both) <= rectArea(rects[rectA]) + rectArea(rects[rectB])) {
+                    rects[rectA] = both;
+                    rects[rectB] = EMPTY_RECT;
                     merged = true;
                 }
             }

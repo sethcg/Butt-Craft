@@ -52,17 +52,14 @@ public final class FartGasUniforms {
     private static final float IMMERSION_START = 0.05F;
     private static final float IMMERSION_FULL = 0.4F;
 
-
     // SORTING SCRATCH (RENDER THREAD ONLY).
+    private static final long[] SORT_KEYS = new long[FartGasSimulation.MAX_PUFFS];
     private static final FartGasSimulation.Puff[] SORTED = new FartGasSimulation.Puff[FartGasSimulation.MAX_PUFFS];
     private static final float[] SORTED_DENSITY = new float[FartGasSimulation.MAX_PUFFS];
     private static final FartGasSimulation.Puff[] GROUPED = new FartGasSimulation.Puff[FartGasSimulation.MAX_PUFFS];
     private static final float[] GROUPED_DENSITY = new float[FartGasSimulation.MAX_PUFFS];
     private static final int[] RECT_ORDER = new int[FartGasSimulation.MAX_RECTS];
     private static final int[] RECT_ENDS = new int[FartGasSimulation.MAX_RECTS];
-
-    /** THE LAST UPLOADED CAMERA IMMERSION (SEE immersion), FOR {@link FartGasBenchmark}. */
-    static float lastImmersion;
 
     /** SIZE OF THE BLOCK IN BYTES. */
     public static final int SIZE;
@@ -79,11 +76,11 @@ public final class FartGasUniforms {
             .putVec4()
             .putIVec4()
             .putIVec4();
-        for (int i = 0; i < FartGasSimulation.MAX_RECTS / 4; i++) {
+        for (int runGroup = 0; runGroup < FartGasSimulation.MAX_RECTS / 4; runGroup++) {
             size.putIVec4();
         }
         // EACH PUFF IS A Puff STRUCT (SEE fart_gas_common.glsl): TWO vec4s AND A uvec4.
-        for (int i = 0; i < FartGasSimulation.MAX_PUFFS; i++) {
+        for (int puffIndex = 0; puffIndex < FartGasSimulation.MAX_PUFFS; puffIndex++) {
             size.putVec4().putVec4().putIVec4();
         }
         SIZE = size.get();
@@ -103,10 +100,9 @@ public final class FartGasUniforms {
 
     /**
      * puffs: HOW MANY PUFFS WERE UPLOADED (0 = NOTHING VISIBLE TO DRAW). rects: HOW MANY SCREEN
-     * RECTANGLES THEY FILL. largestRun: THE MOST PUFFS IN ONE RECTANGLE, ROUGHLY THE MOST A
-     * PIXEL TESTS UNLESS RECTANGLES OVERLAP ON SCREEN.
+     * RECTANGLES THEY FILL.
      */
-    public record Upload(int puffs, int rects, int largestRun) {
+    public record Upload(int puffs, int rects) {
     }
 
     private FartGasUniforms() {
@@ -142,8 +138,7 @@ public final class FartGasUniforms {
         int rects = groupByRect(count);
 
         builder.putVec4(lighting.color().x(), lighting.color().y(), lighting.color().z(), 0.0F);
-        lastImmersion = immersion(count, cameraPos, partial);
-        builder.putVec4(lighting.ambient().x(), lighting.ambient().y(), lighting.ambient().z(), lastImmersion);
+        builder.putVec4(lighting.ambient().x(), lighting.ambient().y(), lighting.ambient().z(), immersion(count, cameraPos, partial));
         builder.putVec4(GAS_ALBEDO.x(), GAS_ALBEDO.y(), GAS_ALBEDO.z(), GAS_DENSITY);
 
         Vector3fc motion = temporal.cameraMotion();
@@ -151,35 +146,30 @@ public final class FartGasUniforms {
 
         builder.putIVec4(count, quality.maxViewSteps(), quality.shadowSteps(), quality.resolutionDivisor());
         builder.putIVec4(temporal.frame(), rects, 0, 0);
-        for (int r = 0; r < FartGasSimulation.MAX_RECTS; r += 4) {
-            builder.putIVec4(RECT_ENDS[r], RECT_ENDS[r + 1], RECT_ENDS[r + 2], RECT_ENDS[r + 3]);
+        for (int run = 0; run < FartGasSimulation.MAX_RECTS; run += 4) {
+            builder.putIVec4(RECT_ENDS[run], RECT_ENDS[run + 1], RECT_ENDS[run + 2], RECT_ENDS[run + 3]);
         }
 
         // ONLY THE VISIBLE PUFFS: THE SHADERS NEVER READ PAST THE COUNT, SO THE REST OF THE
         // ARRAY CAN HOLD WHATEVER WAS THERE BEFORE.
-        for (int i = 0; i < count; i++) {
-            FartGasSimulation.Puff puff = GROUPED[i];
+        for (int puffIndex = 0; puffIndex < count; puffIndex++) {
+            FartGasSimulation.Puff puff = GROUPED[puffIndex];
             float radius = puff.radius(partial);
-            double px = puff.x(partial);
-            double py = puff.y(partial);
-            double pz = puff.z(partial);
-            builder.putVec4((float) (px - cameraPos.x), (float) (py - cameraPos.y), (float) (pz - cameraPos.z), radius);
-            builder.putVec4(GROUPED_DENSITY[i], 1.0F / (radius * radius), puff.sunDepth, puff.skyDepth);
+            double puffX = puff.x(partial);
+            double puffY = puff.y(partial);
+            double puffZ = puff.z(partial);
+            builder.putVec4((float) (puffX - cameraPos.x), (float) (puffY - cameraPos.y), (float) (puffZ - cameraPos.z), radius);
+            builder.putVec4(GROUPED_DENSITY[puffIndex], 1.0F / (radius * radius), puff.sunDepth, puff.skyDepth);
             builder.putIVec4(
                 pack(unorm16(puff.skyLight), unorm16(puff.blockLight)),
-                pack(wall(puff.wallMinX, px, -WALL_RANGE), wall(puff.wallMinY, py, -WALL_RANGE)),
-                pack(wall(puff.wallMinZ, pz, -WALL_RANGE), wall(puff.wallMaxX, px, WALL_RANGE)),
-                pack(wall(puff.wallMaxY, py, WALL_RANGE), wall(puff.wallMaxZ, pz, WALL_RANGE)));
-            SORTED[i] = null;
-            GROUPED[i] = null;
+                pack(wall(puff.wallMinX, puffX, -WALL_RANGE), wall(puff.wallMinY, puffY, -WALL_RANGE)),
+                pack(wall(puff.wallMinZ, puffZ, -WALL_RANGE), wall(puff.wallMaxX, puffX, WALL_RANGE)),
+                pack(wall(puff.wallMaxY, puffY, WALL_RANGE), wall(puff.wallMaxZ, puffZ, WALL_RANGE)));
+            SORTED[puffIndex] = null;
+            GROUPED[puffIndex] = null;
         }
 
-        int largestRun = 0;
-        for (int r = 0; r < rects; r++) {
-            largestRun = Math.max(largestRun, RECT_ENDS[r] - (r == 0 ? 0 : RECT_ENDS[r - 1]));
-        }
-
-        return new Upload(count, rects, largestRun);
+        return new Upload(count, rects);
     }
 
     /**
@@ -189,15 +179,15 @@ public final class FartGasUniforms {
      */
     private static float immersion(int count, Vec3 cameraPos, float partial) {
         float weightSum = 0.0F;
-        for (int i = 0; i < count; i++) {
-            FartGasSimulation.Puff puff = GROUPED[i];
+        for (int puffIndex = 0; puffIndex < count; puffIndex++) {
+            FartGasSimulation.Puff puff = GROUPED[puffIndex];
             float radius = puff.radius(partial);
-            double dx = puff.x(partial) - cameraPos.x;
-            double dy = puff.y(partial) - cameraPos.y;
-            double dz = puff.z(partial) - cameraPos.z;
-            float d2 = (float) ((dx * dx + dy * dy + dz * dz) / (radius * radius));
-            if (d2 < 1.0F) {
-                weightSum += (1.0F - d2) * (1.0F - d2);
+            double offsetX = puff.x(partial) - cameraPos.x;
+            double offsetY = puff.y(partial) - cameraPos.y;
+            double offsetZ = puff.z(partial) - cameraPos.z;
+            float distanceSquared = (float) ((offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ) / (radius * radius));
+            if (distanceSquared < 1.0F) {
+                weightSum += (1.0F - distanceSquared) * (1.0F - distanceSquared);
             }
         }
 
@@ -222,31 +212,26 @@ public final class FartGasUniforms {
 
     /** FILLS SORTED / SORTED_DENSITY WITH THE VISIBLE PUFFS, DENSEST FIRST, AND RETURNS HOW MANY. */
     private static int sortVisible(List<FartGasSimulation.Puff> puffs, float partial) {
+        // THE SIMULATION NEVER HOLDS MORE THAN MAX_PUFFS, SO EVERY VISIBLE PUFF GETS A KEY.
         int count = 0;
-        for (FartGasSimulation.Puff puff : puffs) {
-            float density = puff.density(partial);
+        int puffCount = Math.min(puffs.size(), SORT_KEYS.length);
+        for (int puffIndex = 0; puffIndex < puffCount; puffIndex++) {
+            float density = puffs.get(puffIndex).density(partial);
             if (density < MIN_VISIBLE_DENSITY) {
                 continue;
             }
 
-            // INSERTION SORT (FEW PUFFS). WHEN FULL, THE FAINTEST FALLS OFF THE END.
-            if (count == FartGasSimulation.MAX_PUFFS) {
-                if (density <= SORTED_DENSITY[count - 1]) {
-                    continue;
-                }
-                count--;
-            }
+            // DENSITY IN THE HIGH BITS, THE PUFF'S INDEX IN THE LOW ONES. POSITIVE FLOATS SORT THE
+            // SAME AS THEIR RAW BITS, SO SORTING THE KEYS SORTS THE PUFFS BY DENSITY.
+            SORT_KEYS[count++] = (long) Float.floatToRawIntBits(density) << 32 | puffIndex;
+        }
 
-            int j = count;
-            while (j > 0 && SORTED_DENSITY[j - 1] < density) {
-                SORTED[j] = SORTED[j - 1];
-                SORTED_DENSITY[j] = SORTED_DENSITY[j - 1];
-                j--;
-            }
-
-            SORTED[j] = puff;
-            SORTED_DENSITY[j] = density;
-            count++;
+        // ASCENDING, SO WALK IT BACKWARD FOR DENSEST FIRST
+        Arrays.sort(SORT_KEYS, 0, count);
+        for (int slot = 0; slot < count; slot++) {
+            long key = SORT_KEYS[count - 1 - slot];
+            SORTED[slot] = puffs.get((int) key);
+            SORTED_DENSITY[slot] = Float.intBitsToFloat((int) (key >>> 32));
         }
 
         return count;
@@ -261,8 +246,8 @@ public final class FartGasUniforms {
     private static int groupByRect(int count) {
         Arrays.fill(RECT_ORDER, -1);
         int rects = 0;
-        for (int i = 0; i < count; i++) {
-            int rect = rectOf(SORTED[i]);
+        for (int puffIndex = 0; puffIndex < count; puffIndex++) {
+            int rect = rectOf(SORTED[puffIndex]);
             if (RECT_ORDER[rect] < 0) {
                 RECT_ORDER[rect] = rects++;
             }
@@ -270,26 +255,26 @@ public final class FartGasUniforms {
 
         // COUNT EACH RUN, THEN TURN THE COUNTS INTO END INDICES
         Arrays.fill(RECT_ENDS, 0);
-        for (int i = 0; i < count; i++) {
-            RECT_ENDS[RECT_ORDER[rectOf(SORTED[i])]]++;
+        for (int puffIndex = 0; puffIndex < count; puffIndex++) {
+            RECT_ENDS[RECT_ORDER[rectOf(SORTED[puffIndex])]]++;
         }
 
-        for (int r = 1; r < FartGasSimulation.MAX_RECTS; r++) {
-            RECT_ENDS[r] += RECT_ENDS[r - 1];
+        for (int run = 1; run < FartGasSimulation.MAX_RECTS; run++) {
+            RECT_ENDS[run] += RECT_ENDS[run - 1];
         }
 
         // FILL EACH RUN FROM ITS END BACKWARD, WALKING THE SORTED PUFFS BACKWARD, SO EACH RUN
         // KEEPS THEIR DENSEST-FIRST ORDER. RECT_ENDS ENDS UP HOLDING EACH RUN'S START...
-        for (int i = count - 1; i >= 0; i--) {
-            int run = RECT_ORDER[rectOf(SORTED[i])];
+        for (int puffIndex = count - 1; puffIndex >= 0; puffIndex--) {
+            int run = RECT_ORDER[rectOf(SORTED[puffIndex])];
             int slot = --RECT_ENDS[run];
-            GROUPED[slot] = SORTED[i];
-            GROUPED_DENSITY[slot] = SORTED_DENSITY[i];
+            GROUPED[slot] = SORTED[puffIndex];
+            GROUPED_DENSITY[slot] = SORTED_DENSITY[puffIndex];
         }
 
         // ...SO SHIFT IT BACK TO THE ENDS. EVERY UNUSED RECTANGLE ENDS WHERE THE LAST ONE DOES.
-        for (int r = 0; r < FartGasSimulation.MAX_RECTS; r++) {
-            RECT_ENDS[r] = r + 1 < rects ? RECT_ENDS[r + 1] : count;
+        for (int run = 0; run < FartGasSimulation.MAX_RECTS; run++) {
+            RECT_ENDS[run] = run + 1 < rects ? RECT_ENDS[run + 1] : count;
         }
 
         return rects;

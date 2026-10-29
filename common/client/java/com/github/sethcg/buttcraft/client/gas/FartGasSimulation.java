@@ -66,7 +66,6 @@ public final class FartGasSimulation {
     // PUFF_VOLUME TIMES THE VOLUME OF THE SMALL PUFFS THE GAS WAS TUNED WITH (18 PER FART), SO
     // A FART TAKES FAR LESS OF THE PUFF LIMIT BUT HOLDS ABOUT AS MUCH GAS.
     private static final int EMIT_TICKS = 7;
-    public static final int PUFFS_PER_FART = EMIT_TICKS;
     private static final float PUFF_VOLUME = 2.5F;
     // RADII SCALE BY THE CUBE ROOT OF PUFF_VOLUME, AREAS BY ITS SQUARE
     private static final float PUFF_SCALE = (float) Math.cbrt(PUFF_VOLUME);
@@ -149,7 +148,7 @@ public final class FartGasSimulation {
     private final double[] fieldX = new double[MAX_PUFFS];
     private final double[] fieldY = new double[MAX_PUFFS];
     private final double[] fieldZ = new double[MAX_PUFFS];
-    private final float[] fieldInverseRadius2 = new float[MAX_PUFFS];
+    private final float[] fieldInverseRadiusSquared = new float[MAX_PUFFS];
     private final float[] fieldDensity = new float[MAX_PUFFS];
     private int fieldCount;
     private @Nullable AABB fieldBounds;
@@ -159,28 +158,22 @@ public final class FartGasSimulation {
         Vec3 backward = new Vec3(Math.sin(angle), 0.0, -Math.cos(angle));
         // JUST OUTSIDE THE BACK OF THE PLAYER'S HITBOX (HALF WIDTH 0.3), AT HIP HEIGHT.
         Vec3 origin = pos.add(backward.x * 0.36, 0.7, backward.z * 0.36);
-        this.emitters.add(new Emitter(origin, backward, PUFF_LIFETIME, PUFF_LIFETIME_SPREAD, 1.0F, seed));
+        this.emitters.add(new Emitter(origin, backward, PUFF_LIFETIME, PUFF_LIFETIME_SPREAD, seed));
     }
 
     /**
      * A FART THAT SPREADS OUT EVENLY IN EVERY DIRECTION FROM A POINT (E.G. A SPLASH POTION),
-     * LINGERING ABOUT AS LONG AS THE SERVER'S POISON CLOUD (lifetimeTicks). size SCALES HOW
-     * MUCH GAS THERE IS AND HOW FAR IT SPREADS (1 = A NORMAL FART).
+     * LINGERING ABOUT AS LONG AS THE SERVER'S POISON CLOUD (lifetimeTicks).
      */
-    public void emitBurst(Vec3 pos, int lifetimeTicks, float size, int seed) {
+    public void emitBurst(Vec3 pos, int lifetimeTicks, int seed) {
         // SHORT CLOUDS FADE OUT OVER LESS TIME, SO THEY DON'T OUTLAST THE POISON BY MUCH.
         int lifetimeSpread = Math.max(1, Math.min(PUFF_LIFETIME_SPREAD, lifetimeTicks / 2));
         int puffLifetime = Math.max(1, lifetimeTicks - lifetimeSpread / 3);
-        this.emitters.add(new Emitter(pos, null, puffLifetime, lifetimeSpread, size, seed));
+        this.emitters.add(new Emitter(pos, null, puffLifetime, lifetimeSpread, seed));
     }
 
     public List<Puff> puffs() {
         return this.puffs;
-    }
-
-    /** HOW MANY SEPARATE CLOUDS THE PUFFS FORMED AT THE LAST TICK. */
-    public int cloudCount() {
-        return this.puffs.isEmpty() ? 0 : this.clusterCount;
     }
 
     /** THE (NORMALISED) DIRECTION SHADOWS ARE CAST FROM. WITHOUT DIRECT LIGHT (E.G. THE END) THERE ARE NONE. */
@@ -210,49 +203,49 @@ public final class FartGasSimulation {
         double breezeX = FartBreeze.x(gameTime);
         double breezeZ = FartBreeze.z(gameTime);
         // TURBULENCE PHASE, SHARED BY EVERY PUFF THIS TICK (AND BY EVERY PLAYER).
-        double t = gameTime * 0.045;
+        double turbulencePhase = gameTime * 0.045;
 
-        for (int i = this.puffs.size() - 1; i >= 0; i--) {
-            Puff puff = this.puffs.get(i);
+        for (int puffIndex = this.puffs.size() - 1; puffIndex >= 0; puffIndex--) {
+            Puff puff = this.puffs.get(puffIndex);
             puff.storePrevious();
             puff.age++;
 
             if (puff.age >= puff.lifetime || puff.mass < 0.01F) {
-                this.puffs.remove(i);
+                this.puffs.remove(puffIndex);
                 continue;
             }
 
             // DRAG: LINEAR + QUADRATIC (TURBULENT) TERMS.
-            double speed = Math.sqrt(puff.vx * puff.vx + puff.vy * puff.vy + puff.vz * puff.vz);
+            double speed = Math.sqrt(puff.velocityX * puff.velocityX + puff.velocityY * puff.velocityY + puff.velocityZ * puff.velocityZ);
             double drag = LINEAR_DRAG / (1.0 + QUADRATIC_DRAG * speed);
-            puff.vx *= drag;
-            puff.vy *= drag;
-            puff.vz *= drag;
+            puff.velocityX *= drag;
+            puff.velocityY *= drag;
+            puff.velocityZ *= drag;
 
             // BUOYANCY: WARM GAS RISES, THEN SLOWLY SETTLES ONCE IT COOLS.
             puff.temperature *= COOLING;
-            puff.vy += BUOYANCY * puff.temperature - SETTLING;
+            puff.velocityY += BUOYANCY * puff.temperature - SETTLING;
 
             // TURBULENCE: SMOOTH, DIVERGENCE-FREE-ISH SWIRL FROM LAYERED SINES.
-            double px = puff.x * 0.9 + puff.seed;
-            double py = puff.y * 0.9;
-            double pz = puff.z * 0.9 - puff.seed;
+            double swirlX = puff.x * 0.9 + puff.seed;
+            double swirlY = puff.y * 0.9;
+            double swirlZ = puff.z * 0.9 - puff.seed;
             double turbulence = TURBULENCE * (0.6 + Math.min(1.0, puff.age / 30.0));
-            puff.vx += (Math.sin(py * 1.7 + t) - Math.cos(pz * 1.3 - t * 0.8)) * turbulence;
-            puff.vy += (Math.sin(pz * 1.5 + t * 1.1) - Math.cos(px * 1.9 + t * 0.6)) * turbulence * 0.6;
-            puff.vz += (Math.sin(px * 1.4 - t * 0.9) - Math.cos(py * 1.6 + t * 1.2)) * turbulence;
+            puff.velocityX += (Math.sin(swirlY * 1.7 + turbulencePhase) - Math.cos(swirlZ * 1.3 - turbulencePhase * 0.8)) * turbulence;
+            puff.velocityY += (Math.sin(swirlZ * 1.5 + turbulencePhase * 1.1) - Math.cos(swirlX * 1.9 + turbulencePhase * 0.6)) * turbulence * 0.6;
+            puff.velocityZ += (Math.sin(swirlX * 1.4 - turbulencePhase * 0.9) - Math.cos(swirlY * 1.6 + turbulencePhase * 1.2)) * turbulence;
 
             // AMBIENT BREEZE (ONLY OUTDOORS).
             double exposure = FartBreeze.exposure(hasSkyLight, puff.skyLight);
-            puff.vx += breezeX * exposure;
-            puff.vz += breezeZ * exposure;
+            puff.velocityX += breezeX * exposure;
+            puff.velocityZ += breezeZ * exposure;
 
             this.moveWithCollisions(level, puff);
 
             // GROWTH: MOLECULAR/TURBULENT DIFFUSION + ENTRAINMENT FROM MOTION.
-            float r = puff.radius;
-            r = Mth.sqrt(r * r + DIFFUSION) + (float) (speed * ENTRAINMENT);
-            puff.radius = Math.min(r, MAX_RADIUS);
+            float radius = puff.radius;
+            radius = Mth.sqrt(radius * radius + DIFFUSION) + (float) (speed * ENTRAINMENT);
+            puff.radius = Math.min(radius, MAX_RADIUS);
 
             // DISSIPATION: GAS SLOWLY MIXES BELOW VISIBILITY.
             puff.mass *= 0.997F;
@@ -270,18 +263,17 @@ public final class FartGasSimulation {
 
         // A LOWERED LIMIT (SETTING CHANGED MID-CLOUD) IS REACHED BY MERGING AS PUFFS SPAWN.
         int budget = Mth.clamp(FartGasSettings.current().maxPuffs(), 1, MAX_PUFFS);
-        for (int i = this.emitters.size() - 1; i >= 0; i--) {
-            Emitter emitter = this.emitters.get(i);
+        for (int emitterIndex = this.emitters.size() - 1; emitterIndex >= 0; emitterIndex--) {
+            Emitter emitter = this.emitters.get(emitterIndex);
             // A BURST RELEASES MORE GAS AT ONCE, SINCE IT SPREADS OUT IN EVERY DIRECTION.
             int count = emitter.direction == null && emitter.age < 4 ? 2 : 1;
-            count = Math.max(1, Math.round(count * emitter.size));
-            for (int n = 0; n < count; n++) {
+            for (int spawned = 0; spawned < count; spawned++) {
                 this.spawnPuff(level, emitter, budget);
             }
 
             emitter.age++;
             if (emitter.age >= EMIT_TICKS) {
-                this.emitters.remove(i);
+                this.emitters.remove(emitterIndex);
             }
         }
     }
@@ -299,7 +291,7 @@ public final class FartGasSimulation {
 
         // JET STRENGTH DECAYS OVER THE EMISSION.
         double strength = 1.0 - emitter.age / (double) EMIT_TICKS * 0.65;
-        double speed = Mth.lerp(random.nextDouble(), JET_SPEED_MIN, JET_SPEED_MAX) * strength * emitter.size;
+        double speed = Mth.lerp(random.nextDouble(), JET_SPEED_MIN, JET_SPEED_MAX) * strength;
 
         Vec3 dir;
         if (emitter.direction == null) {
@@ -318,9 +310,9 @@ public final class FartGasSimulation {
         puff.x = emitter.origin.x + random.nextGaussian() * 0.03;
         puff.y = emitter.origin.y + random.nextGaussian() * 0.03;
         puff.z = emitter.origin.z + random.nextGaussian() * 0.03;
-        puff.vx = dir.x * speed;
-        puff.vy = dir.y * speed;
-        puff.vz = dir.z * speed;
+        puff.velocityX = dir.x * speed;
+        puff.velocityY = dir.y * speed;
+        puff.velocityZ = dir.z * speed;
         puff.radius = INITIAL_RADIUS * (0.8F + random.nextFloat() * 0.5F);
         puff.temperature = 1.0F;
         puff.mass = 0.85F + random.nextFloat() * 0.3F;
@@ -334,37 +326,37 @@ public final class FartGasSimulation {
 
     private void applyPressure() {
         int size = this.puffs.size();
-        for (int i = 0; i < size; i++) {
-            Puff a = this.puffs.get(i);
-            for (int j = i + 1; j < size; j++) {
-                Puff b = this.puffs.get(j);
-                double dx = b.x - a.x;
-                double dy = b.y - a.y;
-                double dz = b.z - a.z;
-                double minDistance = (a.radius + b.radius) * 0.45;
-                double d2 = dx * dx + dy * dy + dz * dz;
-                if (d2 >= minDistance * minDistance) {
+        for (int indexA = 0; indexA < size; indexA++) {
+            Puff puffA = this.puffs.get(indexA);
+            for (int indexB = indexA + 1; indexB < size; indexB++) {
+                Puff puffB = this.puffs.get(indexB);
+                double offsetX = puffB.x - puffA.x;
+                double offsetY = puffB.y - puffA.y;
+                double offsetZ = puffB.z - puffA.z;
+                double minDistance = (puffA.radius + puffB.radius) * 0.45;
+                double distanceSquared = offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ;
+                if (distanceSquared >= minDistance * minDistance) {
                     continue;
                 }
 
-                double d = Math.sqrt(d2);
-                if (d < 1.0E-4) {
-                    dx = this.random.nextGaussian();
-                    dy = this.random.nextGaussian() * 0.3;
-                    dz = this.random.nextGaussian();
-                    d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                double distance = Math.sqrt(distanceSquared);
+                if (distance < 1.0E-4) {
+                    offsetX = this.random.nextGaussian();
+                    offsetY = this.random.nextGaussian() * 0.3;
+                    offsetZ = this.random.nextGaussian();
+                    distance = Math.sqrt(offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ);
                 }
 
-                double push = (1.0 - d / minDistance) * PRESSURE / d;
-                double ma = a.mass;
-                double mb = b.mass;
-                double total = ma + mb;
-                a.vx -= dx * push * mb / total;
-                a.vy -= dy * push * mb / total;
-                a.vz -= dz * push * mb / total;
-                b.vx += dx * push * ma / total;
-                b.vy += dy * push * ma / total;
-                b.vz += dz * push * ma / total;
+                double push = (1.0 - distance / minDistance) * PRESSURE / distance;
+                double massA = puffA.mass;
+                double massB = puffB.mass;
+                double total = massA + massB;
+                puffA.velocityX -= offsetX * push * massB / total;
+                puffA.velocityY -= offsetY * push * massB / total;
+                puffA.velocityZ -= offsetZ * push * massB / total;
+                puffB.velocityX += offsetX * push * massA / total;
+                puffB.velocityY += offsetY * push * massA / total;
+                puffB.velocityZ += offsetZ * push * massA / total;
             }
         }
     }
@@ -381,32 +373,32 @@ public final class FartGasSimulation {
         int bestA = -1;
         int bestB = -1;
         double best = Double.MAX_VALUE;
-        for (int i = 0; i < size; i++) {
-            Puff a = this.puffs.get(i);
-            if (a.age < minAge) {
+        for (int indexA = 0; indexA < size; indexA++) {
+            Puff puffA = this.puffs.get(indexA);
+            if (puffA.age < minAge) {
                 continue;
             }
 
-            for (int j = i + 1; j < size; j++) {
-                Puff b = this.puffs.get(j);
-                if (b.age < minAge) {
+            for (int indexB = indexA + 1; indexB < size; indexB++) {
+                Puff puffB = this.puffs.get(indexB);
+                if (puffB.age < minAge) {
                     continue;
                 }
 
-                double dx = b.x - a.x;
-                double dy = b.y - a.y;
-                double dz = b.z - a.z;
-                double radii = a.radius + b.radius;
-                double score = (dx * dx + dy * dy + dz * dz) / (radii * radii);
+                double offsetX = puffB.x - puffA.x;
+                double offsetY = puffB.y - puffA.y;
+                double offsetZ = puffB.z - puffA.z;
+                double radii = puffA.radius + puffB.radius;
+                double score = (offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ) / (radii * radii);
                 if (score < 1.0) {
-                    double lod = Math.sqrt(camera.distanceToSqr(a.x, a.y, a.z)) / MERGE_LOD_DISTANCE;
+                    double lod = Math.sqrt(camera.distanceToSqr(puffA.x, puffA.y, puffA.z)) / MERGE_LOD_DISTANCE;
                     score /= 1.0 + lod * lod;
                 }
 
                 if (score < best) {
                     best = score;
-                    bestA = i;
-                    bestB = j;
+                    bestA = indexA;
+                    bestB = indexB;
                 }
             }
         }
@@ -415,17 +407,17 @@ public final class FartGasSimulation {
             return false;
         }
 
-        Puff b = this.puffs.remove(bestB);
-        this.puffs.get(bestA).absorb(b);
+        Puff puffB = this.puffs.remove(bestB);
+        this.puffs.get(bestA).absorb(puffB);
         return true;
     }
 
     /** LAST RESORT WHEN NOTHING CAN MERGE (A BUDGET OF ONE): DROPS THE LEAST VISIBLE PUFF. */
     private void removeFaintestPuff() {
         int faintest = 0;
-        for (int i = 1; i < this.puffs.size(); i++) {
-            if (this.puffs.get(i).density(1.0F) < this.puffs.get(faintest).density(1.0F)) {
-                faintest = i;
+        for (int puffIndex = 1; puffIndex < this.puffs.size(); puffIndex++) {
+            if (this.puffs.get(puffIndex).density(1.0F) < this.puffs.get(faintest).density(1.0F)) {
+                faintest = puffIndex;
             }
         }
         this.puffs.remove(faintest);
@@ -440,21 +432,21 @@ public final class FartGasSimulation {
     private void updateClusters() {
         int size = this.puffs.size();
         int[] parent = this.clusterParent;
-        for (int i = 0; i < size; i++) {
-            parent[i] = i;
+        for (int puffIndex = 0; puffIndex < size; puffIndex++) {
+            parent[puffIndex] = puffIndex;
         }
 
-        for (int i = 0; i < size; i++) {
-            Puff a = this.puffs.get(i);
-            for (int j = i + 1; j < size; j++) {
-                Puff b = this.puffs.get(j);
-                double dx = b.x - a.x;
-                double dy = b.y - a.y;
-                double dz = b.z - a.z;
-                double reach = a.radius + b.radius + CLUSTER_GAP;
-                if (dx * dx + dy * dy + dz * dz < reach * reach) {
-                    int rootA = this.findRoot(i);
-                    int rootB = this.findRoot(j);
+        for (int indexA = 0; indexA < size; indexA++) {
+            Puff puffA = this.puffs.get(indexA);
+            for (int indexB = indexA + 1; indexB < size; indexB++) {
+                Puff puffB = this.puffs.get(indexB);
+                double offsetX = puffB.x - puffA.x;
+                double offsetY = puffB.y - puffA.y;
+                double offsetZ = puffB.z - puffA.z;
+                double reach = puffA.radius + puffB.radius + CLUSTER_GAP;
+                if (offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ < reach * reach) {
+                    int rootA = this.findRoot(indexA);
+                    int rootB = this.findRoot(indexB);
                     // THE ROOT IS ALWAYS THE CLUSTER'S FIRST PUFF
                     parent[Math.max(rootA, rootB)] = Math.min(rootA, rootB);
                 }
@@ -463,39 +455,39 @@ public final class FartGasSimulation {
 
         // NUMBER THE CLUSTERS IN ORDER OF THEIR FIRST PUFF
         int count = 0;
-        for (int i = 0; i < size; i++) {
-            Puff puff = this.puffs.get(i);
-            int root = this.findRoot(i);
-            puff.cluster = root == i ? count++ : this.puffs.get(root).cluster;
+        for (int puffIndex = 0; puffIndex < size; puffIndex++) {
+            Puff puff = this.puffs.get(puffIndex);
+            int root = this.findRoot(puffIndex);
+            puff.cluster = root == puffIndex ? count++ : this.puffs.get(root).cluster;
         }
 
         // GROUP THE PUFF INDICES BY CLUSTER (COUNTING SORT). parent IS FREE TO REUSE NOW.
         this.clusterCount = count;
         Arrays.fill(this.clusterStart, 0, count + 1, 0);
-        for (int i = 0; i < size; i++) {
-            this.clusterStart[this.puffs.get(i).cluster + 1]++;
+        for (Puff puff : this.puffs) {
+            this.clusterStart[puff.cluster + 1]++;
         }
 
-        for (int c = 0; c < count; c++) {
-            this.clusterStart[c + 1] += this.clusterStart[c];
-            parent[c] = this.clusterStart[c];
+        for (int cluster = 0; cluster < count; cluster++) {
+            this.clusterStart[cluster + 1] += this.clusterStart[cluster];
+            parent[cluster] = this.clusterStart[cluster];
         }
 
-        for (int i = 0; i < size; i++) {
-            this.clusterOrder[parent[this.puffs.get(i).cluster]++] = i;
+        for (int puffIndex = 0; puffIndex < size; puffIndex++) {
+            this.clusterOrder[parent[this.puffs.get(puffIndex).cluster]++] = puffIndex;
         }
 
         this.assignRects();
     }
 
-    private int findRoot(int i) {
+    private int findRoot(int puffIndex) {
         int[] parent = this.clusterParent;
-        while (parent[i] != i) {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
+        while (parent[puffIndex] != puffIndex) {
+            parent[puffIndex] = parent[parent[puffIndex]];
+            puffIndex = parent[puffIndex];
         }
 
-        return i;
+        return puffIndex;
     }
 
     /** SPREADS THE CLUSTERS OVER THE SCREEN RECTANGLES, MERGING THE CLOSEST ONES WHILE THERE ARE TOO MANY. */
@@ -509,56 +501,56 @@ public final class FartGasSimulation {
         }
 
         AABB[] boxes = new AABB[count];
-        int[] group = new int[count];
-        for (int c = 0; c < count; c++) {
-            boxes[c] = this.clusterBounds(c);
-            group[c] = c;
+        int[] clusterGroup = new int[count];
+        for (int cluster = 0; cluster < count; cluster++) {
+            boxes[cluster] = this.clusterBounds(cluster);
+            clusterGroup[cluster] = cluster;
         }
 
-        // boxes[g] IS NULL ONCE GROUP g HAS BEEN MERGED INTO ANOTHER
+        // boxes[group] IS NULL ONCE THAT GROUP HAS BEEN MERGED INTO ANOTHER
         for (int groups = count; groups > MAX_RECTS; groups--) {
             int bestA = -1;
             int bestB = -1;
             double best = Double.MAX_VALUE;
-            for (int a = 0; a < count; a++) {
-                if (boxes[a] == null) {
+            for (int groupA = 0; groupA < count; groupA++) {
+                if (boxes[groupA] == null) {
                     continue;
                 }
 
-                for (int b = a + 1; b < count; b++) {
-                    if (boxes[b] == null) {
+                for (int groupB = groupA + 1; groupB < count; groupB++) {
+                    if (boxes[groupB] == null) {
                         continue;
                     }
 
-                    double gap = gapSqr(boxes[a], boxes[b]);
+                    double gap = gapSqr(boxes[groupA], boxes[groupB]);
                     if (gap < best) {
                         best = gap;
-                        bestA = a;
-                        bestB = b;
+                        bestA = groupA;
+                        bestB = groupB;
                     }
                 }
             }
 
             boxes[bestA] = boxes[bestA].minmax(boxes[bestB]);
             boxes[bestB] = null;
-            for (int c = 0; c < count; c++) {
-                if (group[c] == bestB) {
-                    group[c] = bestA;
+            for (int cluster = 0; cluster < count; cluster++) {
+                if (clusterGroup[cluster] == bestB) {
+                    clusterGroup[cluster] = bestA;
                 }
             }
         }
 
         // NUMBER THE SURVIVING GROUPS 0..MAX_RECTS-1
-        int[] rect = new int[count];
+        int[] groupRect = new int[count];
         int rects = 0;
-        for (int g = 0; g < count; g++) {
-            if (boxes[g] != null) {
-                rect[g] = rects++;
+        for (int group = 0; group < count; group++) {
+            if (boxes[group] != null) {
+                groupRect[group] = rects++;
             }
         }
 
         for (Puff puff : this.puffs) {
-            puff.rect = rect[group[puff.cluster]];
+            puff.rect = groupRect[clusterGroup[puff.cluster]];
         }
     }
 
@@ -569,8 +561,8 @@ public final class FartGasSimulation {
         double maxX = Double.NEGATIVE_INFINITY;
         double maxY = Double.NEGATIVE_INFINITY;
         double maxZ = Double.NEGATIVE_INFINITY;
-        for (int k = this.clusterStart[cluster]; k < this.clusterStart[cluster + 1]; k++) {
-            Puff puff = this.puffs.get(this.clusterOrder[k]);
+        for (int orderIndex = this.clusterStart[cluster]; orderIndex < this.clusterStart[cluster + 1]; orderIndex++) {
+            Puff puff = this.puffs.get(this.clusterOrder[orderIndex]);
             minX = Math.min(minX, puff.x - puff.radius);
             minY = Math.min(minY, puff.y - puff.radius);
             minZ = Math.min(minZ, puff.z - puff.radius);
@@ -583,54 +575,54 @@ public final class FartGasSimulation {
     }
 
     // SQUARED DISTANCE BETWEEN TWO BOXES (0 IF THEY OVERLAP)
-    private static double gapSqr(AABB a, AABB b) {
-        double dx = Math.max(0.0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
-        double dy = Math.max(0.0, Math.max(a.minY - b.maxY, b.minY - a.maxY));
-        double dz = Math.max(0.0, Math.max(a.minZ - b.maxZ, b.minZ - a.maxZ));
-        return dx * dx + dy * dy + dz * dz;
+    private static double gapSqr(AABB boxA, AABB boxB) {
+        double gapX = Math.max(0.0, Math.max(boxA.minX - boxB.maxX, boxB.minX - boxA.maxX));
+        double gapY = Math.max(0.0, Math.max(boxA.minY - boxB.maxY, boxB.minY - boxA.maxY));
+        double gapZ = Math.max(0.0, Math.max(boxA.minZ - boxB.maxZ, boxB.minZ - boxA.maxZ));
+        return gapX * gapX + gapY * gapY + gapZ * gapZ;
     }
 
     private void applyEntityStirring(ClientLevel level) {
         // ONE SEARCH PER CLOUD, SO TWO CLOUDS FAR APART DON'T SCAN EVERY ENTITY BETWEEN THEM.
-        for (int c = 0; c < this.clusterCount; c++) {
-            int start = this.clusterStart[c];
-            int end = this.clusterStart[c + 1];
-            AABB bounds = this.clusterBounds(c).inflate(1.0);
+        for (int cluster = 0; cluster < this.clusterCount; cluster++) {
+            int start = this.clusterStart[cluster];
+            int end = this.clusterStart[cluster + 1];
+            AABB bounds = this.clusterBounds(cluster).inflate(1.0);
             List<LivingEntity> entities = level.getEntitiesOfClass(LivingEntity.class, bounds, Entity::isAlive);
             for (LivingEntity entity : entities) {
-                double evx = entity.getX() - entity.xo;
-                double evy = entity.getY() - entity.yo;
-                double evz = entity.getZ() - entity.zo;
+                double entityVelX = entity.getX() - entity.xo;
+                double entityVelY = entity.getY() - entity.yo;
+                double entityVelZ = entity.getZ() - entity.zo;
                 // ONLY MOVING BODIES DRAG GAS ALONG; A STANDING ONE MUST NOT STALL THE JET.
-                double entitySpeed = Math.sqrt(evx * evx + evy * evy + evz * evz);
+                double entitySpeed = Math.sqrt(entityVelX * entityVelX + entityVelY * entityVelY + entityVelZ * entityVelZ);
                 double dragAlong = Math.min(1.0, entitySpeed / 0.08);
                 AABB box = entity.getBoundingBox();
-                double cx = (box.minX + box.maxX) * 0.5;
-                double cy = (box.minY + box.maxY) * 0.5;
-                double cz = (box.minZ + box.maxZ) * 0.5;
+                double centerX = (box.minX + box.maxX) * 0.5;
+                double centerY = (box.minY + box.maxY) * 0.5;
+                double centerZ = (box.minZ + box.maxZ) * 0.5;
                 double reach = Math.max(box.getXsize(), box.getYsize()) * 0.5 + 0.35;
 
-                for (int k = start; k < end; k++) {
-                    Puff puff = this.puffs.get(this.clusterOrder[k]);
-                    double dx = puff.x - cx;
-                    double dy = puff.y - cy;
-                    double dz = puff.z - cz;
+                for (int orderIndex = start; orderIndex < end; orderIndex++) {
+                    Puff puff = this.puffs.get(this.clusterOrder[orderIndex]);
+                    double offsetX = puff.x - centerX;
+                    double offsetY = puff.y - centerY;
+                    double offsetZ = puff.z - centerZ;
                     double influence = reach + puff.radius;
-                    double d2 = dx * dx + dy * dy + dz * dz;
-                    if (d2 >= influence * influence) {
+                    double distanceSquared = offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ;
+                    if (distanceSquared >= influence * influence) {
                         continue;
                     }
 
-                    double d = Math.sqrt(d2) + 1.0E-4;
-                    double w = 1.0 - d / influence;
-                    w *= w;
+                    double distance = Math.sqrt(distanceSquared) + 1.0E-4;
+                    double weight = 1.0 - distance / influence;
+                    weight *= weight;
 
                     // DRAG ALONG WITH A MOVING BODY + DISPLACE SIDEWAYS OUT OF ITS VOLUME (WAKE).
-                    double horizontal = Math.sqrt(dx * dx + dz * dz) + 1.0E-4;
-                    double drag = w * 0.3 * dragAlong;
-                    puff.vx += (evx * 0.7 - puff.vx) * drag + dx / horizontal * w * 0.01;
-                    puff.vy += (evy * 0.5 - puff.vy) * drag * 0.6;
-                    puff.vz += (evz * 0.7 - puff.vz) * drag + dz / horizontal * w * 0.01;
+                    double horizontal = Math.sqrt(offsetX * offsetX + offsetZ * offsetZ) + 1.0E-4;
+                    double drag = weight * 0.3 * dragAlong;
+                    puff.velocityX += (entityVelX * 0.7 - puff.velocityX) * drag + offsetX / horizontal * weight * 0.01;
+                    puff.velocityY += (entityVelY * 0.5 - puff.velocityY) * drag * 0.6;
+                    puff.velocityZ += (entityVelZ * 0.7 - puff.velocityZ) * drag + offsetZ / horizontal * weight * 0.01;
                 }
             }
         }
@@ -640,48 +632,48 @@ public final class FartGasSimulation {
         // PROBE A LITTLE AHEAD OF THE CENTER SO GAS STOPS AT SURFACES RATHER THAN SINKING INTO THEM.
         double probe = Math.min(puff.radius * 0.45, 0.45);
 
-        double nx = puff.x + puff.vx;
-        if (this.isSolid(level, nx + Math.signum(puff.vx) * probe, puff.y, puff.z)) {
-            double hit = puff.vx;
-            puff.vx = -hit * 0.12;
-            puff.vy += Math.abs(hit) * 0.08;
-            puff.vz += Math.abs(hit) * 0.25 * (puff.vz >= 0.0 ? 1.0 : -1.0);
+        double nextX = puff.x + puff.velocityX;
+        if (this.isSolid(level, nextX + Math.signum(puff.velocityX) * probe, puff.y, puff.z)) {
+            double hit = puff.velocityX;
+            puff.velocityX = -hit * 0.12;
+            puff.velocityY += Math.abs(hit) * 0.08;
+            puff.velocityZ += Math.abs(hit) * 0.25 * (puff.velocityZ >= 0.0 ? 1.0 : -1.0);
         } else {
-            puff.x = nx;
+            puff.x = nextX;
         }
 
-        double ny = puff.y + puff.vy;
-        if (this.isSolid(level, puff.x, ny + Math.signum(puff.vy) * probe, puff.z)) {
+        double nextY = puff.y + puff.velocityY;
+        if (this.isSolid(level, puff.x, nextY + Math.signum(puff.velocityY) * probe, puff.z)) {
             // HITTING A FLOOR/CEILING SPREADS THE GAS SIDEWAYS LIKE A POOL.
-            double hit = Math.abs(puff.vy);
-            puff.vy = -puff.vy * 0.1;
+            double hit = Math.abs(puff.velocityY);
+            puff.velocityY = -puff.velocityY * 0.1;
             double spread = hit * 0.6;
-            double horizontal = Math.sqrt(puff.vx * puff.vx + puff.vz * puff.vz);
+            double horizontal = Math.sqrt(puff.velocityX * puff.velocityX + puff.velocityZ * puff.velocityZ);
             if (horizontal > 1.0E-4) {
-                puff.vx += puff.vx / horizontal * spread;
-                puff.vz += puff.vz / horizontal * spread;
+                puff.velocityX += puff.velocityX / horizontal * spread;
+                puff.velocityZ += puff.velocityZ / horizontal * spread;
             } else {
-                double a = puff.seed * 7.0;
-                puff.vx += Math.cos(a) * spread;
-                puff.vz += Math.sin(a) * spread;
+                double angle = puff.seed * 7.0;
+                puff.velocityX += Math.cos(angle) * spread;
+                puff.velocityZ += Math.sin(angle) * spread;
             }
         } else {
-            puff.y = ny;
+            puff.y = nextY;
         }
 
-        double nz = puff.z + puff.vz;
-        if (this.isSolid(level, puff.x, puff.y, nz + Math.signum(puff.vz) * probe)) {
-            double hit = puff.vz;
-            puff.vz = -hit * 0.12;
-            puff.vy += Math.abs(hit) * 0.08;
-            puff.vx += Math.abs(hit) * 0.25 * (puff.vx >= 0.0 ? 1.0 : -1.0);
+        double nextZ = puff.z + puff.velocityZ;
+        if (this.isSolid(level, puff.x, puff.y, nextZ + Math.signum(puff.velocityZ) * probe)) {
+            double hit = puff.velocityZ;
+            puff.velocityZ = -hit * 0.12;
+            puff.velocityY += Math.abs(hit) * 0.08;
+            puff.velocityX += Math.abs(hit) * 0.25 * (puff.velocityX >= 0.0 ? 1.0 : -1.0);
         } else {
-            puff.z = nz;
+            puff.z = nextZ;
         }
 
         // ESCAPE IF A BLOCK APPEARED AROUND THE PUFF (E.G. PLACED BY A PLAYER).
         if (this.isSolid(level, puff.x, puff.y, puff.z)) {
-            puff.vy += 0.03;
+            puff.velocityY += 0.03;
             puff.mass *= 0.9F;
         }
     }
@@ -703,18 +695,18 @@ public final class FartGasSimulation {
             return false;
         }
 
-        double lx = x - this.mutablePos.getX();
-        double ly = y - this.mutablePos.getY();
-        double lz = z - this.mutablePos.getZ();
+        double localX = x - this.mutablePos.getX();
+        double localY = y - this.mutablePos.getY();
+        double localZ = z - this.mutablePos.getZ();
 
         // CHEAP REJECT (E.G. ABOVE A SLAB) BEFORE toAabbs() BUILDS A LIST OF BOXES.
         AABB bounds = shape.bounds();
-        if (lx < bounds.minX || lx > bounds.maxX || ly < bounds.minY || ly > bounds.maxY || lz < bounds.minZ || lz > bounds.maxZ) {
+        if (localX < bounds.minX || localX > bounds.maxX || localY < bounds.minY || localY > bounds.maxY || localZ < bounds.minZ || localZ > bounds.maxZ) {
             return false;
         }
 
         for (AABB box : shape.toAabbs()) {
-            if (lx >= box.minX && lx <= box.maxX && ly >= box.minY && ly <= box.maxY && lz >= box.minZ && lz <= box.maxZ) {
+            if (localX >= box.minX && localX <= box.maxX && localY >= box.minY && localY <= box.maxY && localZ >= box.minZ && localZ <= box.maxZ) {
                 return true;
             }
         }
@@ -739,24 +731,24 @@ public final class FartGasSimulation {
 
     /** COORDINATE OF THE NEAREST SURFACE FROM THE PUFF'S CENTER IN ONE DIRECTION, OR INFINITE IF NONE IS WITHIN reach. */
     private double findWall(ClientLevel level, Puff puff, Direction.Axis axis, int sign, double reach) {
-        int bx = Mth.floor(puff.x);
-        int by = Mth.floor(puff.y);
-        int bz = Mth.floor(puff.z);
+        int blockX = Mth.floor(puff.x);
+        int blockY = Mth.floor(puff.y);
+        int blockZ = Mth.floor(puff.z);
         double center = axis.choose(puff.x, puff.y, puff.z);
-        int start = axis.choose(bx, by, bz);
+        int start = axis.choose(blockX, blockY, blockZ);
 
-        for (int k = 0; k <= WALL_SEARCH_BLOCKS; k++) {
-            int cell = start + sign * k;
+        for (int step = 0; step <= WALL_SEARCH_BLOCKS; step++) {
+            int cell = start + sign * step;
             // THE SIDE OF THIS BLOCK FACING THE PUFF
             double face = sign > 0 ? cell : cell + 1;
-            if (k > 0 && Math.abs(face - center) > reach) {
+            if (step > 0 && Math.abs(face - center) > reach) {
                 break;
             }
 
             this.mutablePos.set(
-                axis == Direction.Axis.X ? cell : bx,
-                axis == Direction.Axis.Y ? cell : by,
-                axis == Direction.Axis.Z ? cell : bz);
+                axis == Direction.Axis.X ? cell : blockX,
+                axis == Direction.Axis.Y ? cell : blockY,
+                axis == Direction.Axis.Z ? cell : blockZ);
             BlockState state = level.getBlockState(this.mutablePos);
             if (state.isAir()) {
                 continue;
@@ -764,7 +756,7 @@ public final class FartGasSimulation {
 
             if (state.isCollisionShapeFullBlock(level, this.mutablePos)) {
                 // A PUFF INSIDE A BLOCK (E.G. ONE JUST PLACED ON IT) HAS NO ROOM AT ALL.
-                return k == 0 ? center : face;
+                return step == 0 ? center : face;
             }
 
             VoxelShape shape = state.getCollisionShape(level, this.mutablePos);
@@ -773,13 +765,13 @@ public final class FartGasSimulation {
             }
 
             // ONLY BOXES THAT THE AXIS LINE THROUGH THE CENTER PASSES THROUGH, ON THIS SIDE OF IT.
-            double lx = puff.x - this.mutablePos.getX();
-            double ly = puff.y - this.mutablePos.getY();
-            double lz = puff.z - this.mutablePos.getZ();
+            double localX = puff.x - this.mutablePos.getX();
+            double localY = puff.y - this.mutablePos.getY();
+            double localZ = puff.z - this.mutablePos.getZ();
             double local = center - cell;
             double nearest = sign > 0 ? Double.POSITIVE_INFINITY : Double.NEGATIVE_INFINITY;
             for (AABB box : shape.toAabbs()) {
-                if (!crossesLine(box, axis, lx, ly, lz)) {
+                if (!crossesLine(box, axis, localX, localY, localZ)) {
                     continue;
                 }
 
@@ -799,10 +791,10 @@ public final class FartGasSimulation {
     }
 
     // TRUE IF THE LINE ALONG axis THROUGH THE (BLOCK-LOCAL) POINT PASSES THROUGH THE BOX
-    private static boolean crossesLine(AABB box, Direction.Axis axis, double lx, double ly, double lz) {
-        return (axis == Direction.Axis.X || (lx >= box.minX && lx <= box.maxX))
-            && (axis == Direction.Axis.Y || (ly >= box.minY && ly <= box.maxY))
-            && (axis == Direction.Axis.Z || (lz >= box.minZ && lz <= box.maxZ));
+    private static boolean crossesLine(AABB box, Direction.Axis axis, double localX, double localY, double localZ) {
+        return (axis == Direction.Axis.X || (localX >= box.minX && localX <= box.maxX))
+            && (axis == Direction.Axis.Y || (localY >= box.minY && localY <= box.maxY))
+            && (axis == Direction.Axis.Z || (localZ >= box.minZ && localZ <= box.maxZ));
     }
 
     /** response: HOW FAR (0-1) THE PUFF'S LIGHT MOVES TOWARD THE LIGHT AT ITS NEW POSITION. */
@@ -818,7 +810,7 @@ public final class FartGasSimulation {
         // GAS THAT DRIFTS INTO WATER OR LAVA BUBBLES AWAY QUICKLY.
         if (!level.getFluidState(this.mutablePos).isEmpty()) {
             puff.mass *= 0.86F;
-            puff.vy += 0.01;
+            puff.velocityY += 0.01;
         }
     }
 
@@ -839,13 +831,13 @@ public final class FartGasSimulation {
         double maxX = Double.NEGATIVE_INFINITY;
         double maxY = Double.NEGATIVE_INFINITY;
         double maxZ = Double.NEGATIVE_INFINITY;
-        for (int i = 0; i < size; i++) {
-            Puff puff = this.puffs.get(i);
-            this.fieldX[i] = puff.x;
-            this.fieldY[i] = puff.y;
-            this.fieldZ[i] = puff.z;
-            this.fieldInverseRadius2[i] = 1.0F / (puff.radius * puff.radius);
-            this.fieldDensity[i] = puff.density(1.0F);
+        for (int puffIndex = 0; puffIndex < size; puffIndex++) {
+            Puff puff = this.puffs.get(puffIndex);
+            this.fieldX[puffIndex] = puff.x;
+            this.fieldY[puffIndex] = puff.y;
+            this.fieldZ[puffIndex] = puff.z;
+            this.fieldInverseRadiusSquared[puffIndex] = 1.0F / (puff.radius * puff.radius);
+            this.fieldDensity[puffIndex] = puff.density(1.0F);
             minX = Math.min(minX, puff.x - puff.radius);
             minY = Math.min(minY, puff.y - puff.radius);
             minZ = Math.min(minZ, puff.z - puff.radius);
@@ -864,16 +856,16 @@ public final class FartGasSimulation {
         }
     }
 
-    private float opticalDepth(Puff puff, double dx, double dy, double dz) {
+    private float opticalDepth(Puff puff, double dirX, double dirY, double dirZ) {
         AABB bounds = this.fieldBounds;
         float depth = 0.0F;
         double start = 0.0;
         double step = LIGHT_FIRST_STEP;
-        for (int s = 0; s < LIGHT_STEPS; s++) {
-            double t = start + step * 0.5;
-            double x = puff.x + dx * t;
-            double y = puff.y + dy * t;
-            double z = puff.z + dz * t;
+        for (int stepNumber = 0; stepNumber < LIGHT_STEPS; stepNumber++) {
+            double distance = start + step * 0.5;
+            double x = puff.x + dirX * distance;
+            double y = puff.y + dirY * distance;
+            double z = puff.z + dirZ * distance;
             // THE RAY STARTS INSIDE THE BOUNDS, SO ONCE IT LEAVES THEM THERE IS NO MORE GAS AHEAD.
             if (x < bounds.minX || x > bounds.maxX || y < bounds.minY || y > bounds.maxY || z < bounds.minZ || z > bounds.maxZ) {
                 break;
@@ -891,19 +883,19 @@ public final class FartGasSimulation {
     private float smoothDensity(double x, double y, double z) {
         float weightSum = 0.0F;
         float densitySum = 0.0F;
-        for (int i = 0; i < this.fieldCount; i++) {
-            double dx = x - this.fieldX[i];
-            double dy = y - this.fieldY[i];
-            double dz = z - this.fieldZ[i];
-            float d2 = (float) (dx * dx + dy * dy + dz * dz) * this.fieldInverseRadius2[i];
-            if (d2 >= 1.0F) {
+        for (int puffIndex = 0; puffIndex < this.fieldCount; puffIndex++) {
+            double offsetX = x - this.fieldX[puffIndex];
+            double offsetY = y - this.fieldY[puffIndex];
+            double offsetZ = z - this.fieldZ[puffIndex];
+            float distanceSquared = (float) (offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ) * this.fieldInverseRadiusSquared[puffIndex];
+            if (distanceSquared >= 1.0F) {
                 continue;
             }
 
-            float w = 1.0F - d2;
-            w *= w;
-            weightSum += w;
-            densitySum += w * this.fieldDensity[i];
+            float weight = 1.0F - distanceSquared;
+            weight *= weight;
+            weightSum += weight;
+            densitySum += weight * this.fieldDensity[puffIndex];
         }
 
         if (weightSum <= 0.0F) {
@@ -916,7 +908,7 @@ public final class FartGasSimulation {
     public static final class Puff {
         double x, y, z;
         double prevX, prevY, prevZ;
-        double vx, vy, vz;
+        double velocityX, velocityY, velocityZ;
         float radius, prevRadius;
         float mass, prevMass;
         float temperature;
@@ -967,14 +959,14 @@ public final class FartGasSimulation {
 
         /** VISIBLE DENSITY: MASS SPREAD OVER THE PUFF'S VOLUME, WITH FADE IN/OUT. */
         public float density(float partial) {
-            float r = this.radius(partial);
+            float radius = this.radius(partial);
             float mass = Mth.lerp(partial, this.prevMass, this.mass);
             float age = this.age + partial;
             float fadeIn = Mth.clamp(age / 3.0F, 0.0F, 1.0F);
             float fadeOut = Mth.clamp((this.lifetime - age) / 60.0F, 0.0F, 1.0F);
             // SPREADING THE SAME MASS OVER A BIGGER PUFF THINS IT OUT. THE EXPONENT IS BELOW
             // THE PHYSICAL 3 BECAUSE THE VIEW RAY ALSO GETS LONGER THROUGH A BIGGER PUFF.
-            return mass * dilution(r) * fadeIn * fadeOut * fadeOut;
+            return mass * dilution(radius) * fadeIn * fadeOut * fadeOut;
         }
 
         private static float dilution(float radius) {
@@ -986,30 +978,30 @@ public final class FartGasSimulation {
          * DENSITY ARE CONSERVED, SO THE CLOUD KEEPS ROUGHLY THE SAME SHAPE AND OPACITY.
          */
         void absorb(Puff other) {
-            float va = this.radius * this.radius * this.radius;
-            float vb = other.radius * other.radius * other.radius;
-            float wa = va / (va + vb);
-            float wb = 1.0F - wa;
+            float volumeA = this.radius * this.radius * this.radius;
+            float volumeB = other.radius * other.radius * other.radius;
+            float volumeWeightA = volumeA / (volumeA + volumeB);
+            float volumeWeightB = 1.0F - volumeWeightA;
             float massWeightA = this.mass / (this.mass + other.mass);
             float massWeightB = 1.0F - massWeightA;
             if (massWeightB > massWeightA) {
                 this.seed = other.seed;
             }
 
-            float targetDensity = this.mass * dilution(this.radius) * wa + other.mass * dilution(other.radius) * wb;
-            float prevTargetDensity = this.prevMass * dilution(this.prevRadius) * wa + other.prevMass * dilution(other.prevRadius) * wb;
+            float targetDensity = this.mass * dilution(this.radius) * volumeWeightA + other.mass * dilution(other.radius) * volumeWeightB;
+            float prevTargetDensity = this.prevMass * dilution(this.prevRadius) * volumeWeightA + other.prevMass * dilution(other.prevRadius) * volumeWeightB;
 
-            this.x = this.x * wa + other.x * wb;
-            this.y = this.y * wa + other.y * wb;
-            this.z = this.z * wa + other.z * wb;
-            this.prevX = this.prevX * wa + other.prevX * wb;
-            this.prevY = this.prevY * wa + other.prevY * wb;
-            this.prevZ = this.prevZ * wa + other.prevZ * wb;
-            this.vx = this.vx * massWeightA + other.vx * massWeightB;
-            this.vy = this.vy * massWeightA + other.vy * massWeightB;
-            this.vz = this.vz * massWeightA + other.vz * massWeightB;
+            this.x = this.x * volumeWeightA + other.x * volumeWeightB;
+            this.y = this.y * volumeWeightA + other.y * volumeWeightB;
+            this.z = this.z * volumeWeightA + other.z * volumeWeightB;
+            this.prevX = this.prevX * volumeWeightA + other.prevX * volumeWeightB;
+            this.prevY = this.prevY * volumeWeightA + other.prevY * volumeWeightB;
+            this.prevZ = this.prevZ * volumeWeightA + other.prevZ * volumeWeightB;
+            this.velocityX = this.velocityX * massWeightA + other.velocityX * massWeightB;
+            this.velocityY = this.velocityY * massWeightA + other.velocityY * massWeightB;
+            this.velocityZ = this.velocityZ * massWeightA + other.velocityZ * massWeightB;
 
-            this.radius = Math.min((float) Math.cbrt(va + vb), MAX_RADIUS);
+            this.radius = Math.min((float) Math.cbrt(volumeA + volumeB), MAX_RADIUS);
             float prevVolume = this.prevRadius * this.prevRadius * this.prevRadius
                 + other.prevRadius * other.prevRadius * other.prevRadius;
             this.prevRadius = Math.min((float) Math.cbrt(prevVolume), MAX_RADIUS);
@@ -1017,10 +1009,10 @@ public final class FartGasSimulation {
             this.prevMass = prevTargetDensity / dilution(this.prevRadius);
 
             this.temperature = this.temperature * massWeightA + other.temperature * massWeightB;
-            this.skyLight = this.skyLight * wa + other.skyLight * wb;
-            this.blockLight = this.blockLight * wa + other.blockLight * wb;
-            this.sunDepth = this.sunDepth * wa + other.sunDepth * wb;
-            this.skyDepth = this.skyDepth * wa + other.skyDepth * wb;
+            this.skyLight = this.skyLight * volumeWeightA + other.skyLight * volumeWeightB;
+            this.blockLight = this.blockLight * volumeWeightA + other.blockLight * volumeWeightB;
+            this.sunDepth = this.sunDepth * volumeWeightA + other.sunDepth * volumeWeightB;
+            this.skyDepth = this.skyDepth * volumeWeightA + other.skyDepth * volumeWeightB;
 
             // LIVE AS LONG AS THE LONGER-LIVED HALF. TAKE THE OLDER AGE, SO MERGING INTO A PUFF THAT
             // IS STILL FADING IN (WHEN NOTHING SETTLED IS LEFT TO MERGE) DOESN'T BLINK THE RESULT.
@@ -1036,17 +1028,15 @@ public final class FartGasSimulation {
         final @Nullable Vec3 direction;
         final int puffLifetime;
         final int lifetimeSpread;
-        final float size;
         // SEEDED BY THE SERVER, SO EVERY PLAYER'S COPY OF THIS FART RELEASES THE SAME PUFFS
         final RandomSource random;
         int age;
 
-        Emitter(Vec3 origin, @Nullable Vec3 direction, int puffLifetime, int lifetimeSpread, float size, int seed) {
+        Emitter(Vec3 origin, @Nullable Vec3 direction, int puffLifetime, int lifetimeSpread, int seed) {
             this.origin = origin;
             this.direction = direction;
             this.puffLifetime = puffLifetime;
             this.lifetimeSpread = lifetimeSpread;
-            this.size = size;
             this.random = RandomSource.create(seed);
         }
     }

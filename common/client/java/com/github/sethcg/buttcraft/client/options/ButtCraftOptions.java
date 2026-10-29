@@ -56,7 +56,7 @@ public final class ButtCraftOptions {
 
         this.maxPuffs = slider("options.buttcraft.gas_puffs",
             FartGasSettings.MIN_MAX_PUFFS, FartGasSettings.MAX_MAX_PUFFS, values.maxPuffs(),
-            puffs -> this.update(v -> v.withMaxPuffs(puffs)));
+            puffs -> this.update(settings -> settings.withMaxPuffs(puffs)));
 
         this.resolution = new OptionInstance<>(
             "options.buttcraft.gas_resolution",
@@ -64,21 +64,21 @@ public final class ButtCraftOptions {
             (caption, divisor) -> Component.translatable("options.buttcraft.gas_resolution." + divisor),
             new OptionInstance.Enum<>(Arrays.stream(FartGasSettings.RESOLUTION_DIVISORS).boxed().toList(), Codec.INT),
             values.resolutionDivisor(),
-            divisor -> this.update(v -> v.withResolutionDivisor(divisor)));
+            divisor -> this.update(settings -> settings.withResolutionDivisor(divisor)));
 
         this.viewSteps = slider("options.buttcraft.gas_detail",
             FartGasSettings.MIN_VIEW_STEPS, FartGasSettings.MAX_VIEW_STEPS, values.maxViewSteps(),
-            steps -> this.update(v -> v.withMaxViewSteps(steps)));
+            steps -> this.update(settings -> settings.withMaxViewSteps(steps)));
 
         this.shadowSteps = slider("options.buttcraft.gas_shading",
             FartGasSettings.MIN_SHADOW_STEPS, FartGasSettings.MAX_SHADOW_STEPS, values.shadowSteps(),
-            steps -> this.update(v -> v.withShadowSteps(steps)));
+            steps -> this.update(settings -> settings.withShadowSteps(steps)));
 
         this.smoothing = OptionInstance.createBoolean(
             "options.buttcraft.gas_smoothing",
             OptionInstance.cachedConstantTooltip(Component.translatable("options.buttcraft.gas_smoothing.tooltip")),
             values.temporalSmoothing(),
-            smooth -> this.update(v -> v.withTemporalSmoothing(smooth)));
+            smooth -> this.update(settings -> settings.withTemporalSmoothing(smooth)));
     }
 
     public List<OptionInstance<?>> details() {

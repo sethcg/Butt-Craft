@@ -9,7 +9,7 @@ package com.github.sethcg.buttcraft;
 public final class FartBreeze {
 
     // PUSH PER TICK (BLOCKS / TICK, EACH TICK) WITH A CLEAR VIEW OF THE SKY
-    public static final double STRENGTH = 0.0011;
+    private static final double STRENGTH = 0.0011;
 
     private FartBreeze() {
     }

@@ -32,9 +32,6 @@ public final class FartGas {
         FartGasSettings.load();
         LOGGER.info("FART GAS SETTINGS: {} ({}).", FartGasSettings.current(), FartGasSettings.preset());
 
-        FartGasRenderer.initialize();
-        FartGasDebug.register();
-
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> RENDERER.close());
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
@@ -49,13 +46,7 @@ public final class FartGas {
             }
 
             if (!client.isPaused()) {
-                long start = System.nanoTime();
                 SIMULATION.tick(client.level);
-                long tickNanos = System.nanoTime() - start;
-                FartGasDebug.recordTick(tickNanos, SIMULATION.puffs().size(), SIMULATION.cloudCount());
-                if (FartGasBenchmark.ACTIVE) {
-                    FartGasBenchmark.tick(client, SIMULATION, tickNanos);
-                }
             }
         });
 
@@ -67,7 +58,7 @@ public final class FartGas {
         SIMULATION.emit(pos, yaw, seed);
     }
 
-    public static void emitBurst(Vec3 pos, int lifetimeTicks, float size, int seed) {
-        SIMULATION.emitBurst(pos, lifetimeTicks, size, seed);
+    public static void emitBurst(Vec3 pos, int lifetimeTicks, int seed) {
+        SIMULATION.emitBurst(pos, lifetimeTicks, seed);
     }
 }

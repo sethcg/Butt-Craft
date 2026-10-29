@@ -151,25 +151,25 @@ const vec3 BLOCK_LIGHT_TINT = vec3(1.0, 0.78, 0.52);
 
 // ONE FETCH FROM A PRE-BLENDED ATLAS OF size^3 TEXELS LAID OUT IN A grid OF SLICES: THE
 // R/G AND B/A CHANNEL PAIRS, EACH INTERPOLATED BETWEEN THIS SLICE AND THE NEXT.
-vec2 atlas3(sampler2D atlas, vec3 p, float size, vec2 grid) {
-    p = fract(p);
+vec2 atlas3(sampler2D atlas, vec3 pos, float size, vec2 grid) {
+    pos = fract(pos);
     float tile = size + 2.0;
-    float z = p.z * size - 0.5;
-    float zi = floor(z);
-    float slice = mod(zi + size, size);
+    float sliceCoord = pos.z * size - 0.5;
+    float sliceIndex = floor(sliceCoord);
+    float slice = mod(sliceIndex + size, size);
     vec2 cell = vec2(mod(slice, grid.x), floor(slice / grid.x));
-    vec4 n = texture(atlas, (cell * tile + 1.0 + p.xy * size) / (grid * tile));
-    return mix(n.rb, n.ga, z - zi);
+    vec4 noise = texture(atlas, (cell * tile + 1.0 + pos.xy * size) / (grid * tile));
+    return mix(noise.rb, noise.ga, sliceCoord - sliceIndex);
 }
 
-float remap(float v, float lo, float hi) {
-    return clamp((v - lo) / max(hi - lo, 1e-4), 0.0, 1.0);
+float remap(float value, float low, float high) {
+    return clamp((value - low) / max(high - low, 1e-4), 0.0, 1.0);
 }
 
 // NORMALISED HENYEY-GREENSTEIN (ISOTROPIC == 1).
-float henyeyGreenstein(float cosTheta, float g) {
-    float g2 = g * g;
-    return (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * cosTheta, 1e-4), 1.5);
+float henyeyGreenstein(float cosTheta, float anisotropy) {
+    float anisotropySquared = anisotropy * anisotropy;
+    return (1.0 - anisotropySquared) / pow(max(1.0 + anisotropySquared - 2.0 * anisotropy * cosTheta, 1e-4), 1.5);
 }
 
 float phase(float cosTheta, float eccentricity) {
@@ -192,38 +192,38 @@ uint hitWords[MAX_HITS / 4];
 int viewHitCount = 0;
 int hitCount = 0;
 
-int hitPuff(int k) {
-    return int((hitWords[k >> 2] >> ((k & 3) * 8)) & 255u);
+int hitPuff(int hit) {
+    return int((hitWords[hit >> 2] >> ((hit & 3) * 8)) & 255u);
 }
 
-void addHit(int puff) {
-    hitWords[hitCount >> 2] |= uint(puff) << ((hitCount & 3) * 8);
+void addHit(int puffIndex) {
+    hitWords[hitCount >> 2] |= uint(puffIndex) << ((hitCount & 3) * 8);
     hitCount++;
 }
 
-void setHit(int k, int puff) {
-    int shift = (k & 3) * 8;
-    hitWords[k >> 2] = (hitWords[k >> 2] & ~(255u << shift)) | (uint(puff) << shift);
+void setHit(int hit, int puffIndex) {
+    int shift = (hit & 3) * 8;
+    hitWords[hit >> 2] = (hitWords[hit >> 2] & ~(255u << shift)) | (uint(puffIndex) << shift);
 }
 
-// WHERE ALONG THE VIEW RAY EACH HIT MATTERS: A SAMPLE AT t IS INSIDE VIEW HIT k ONLY WHEN
-// |t - hitMid[k]| < hitHalf[k], AND ITS SHADOW SAMPLES CAN ONLY REACH HIT k WHEN
-// |t - hitMid[k]| < hitReach[k] (THE PUFF GROWN BY SHADOW_REACH). INSIDE A CLOUD THE RAY HITS
+// WHERE ALONG THE VIEW RAY EACH HIT MATTERS: A SAMPLE AT t IS INSIDE A VIEW HIT ONLY WHEN
+// |t - hitMid[hit]| < hitHalf[hit], AND ITS SHADOW SAMPLES CAN ONLY REACH THAT HIT WHEN
+// |t - hitMid[hit]| < hitReach[hit] (THE PUFF GROWN BY SHADOW_REACH). INSIDE A CLOUD THE RAY HITS
 // MOST OF ITS PUFFS, BUT EACH SAMPLE IS ONLY IN A FEW, SO THE FIELD LOOPS SKIP THE REST WITHOUT
 // READING THEM.
 float hitMid[MAX_HITS];
 float hitHalf[MAX_VIEW_HITS];
 float hitReach[MAX_HITS];
 
-// SETS HIT k'S WINDOWS. toCenter / b ARE THE PUFF'S CENTER FROM THE RAY ORIGIN, AND ALONG THE RAY.
-void setWindow(int k, vec3 toCenter, float b, float radius) {
-    float offRay = dot(toCenter, toCenter) - b * b;
+// SETS THE HIT'S WINDOWS. toCenter / alongRay ARE THE PUFF'S CENTER FROM THE RAY ORIGIN, AND ALONG THE RAY.
+void setWindow(int hit, vec3 toCenter, float alongRay, float radius) {
+    float offRay = dot(toCenter, toCenter) - alongRay * alongRay;
     float reach = radius + SHADOW_REACH;
-    hitMid[k] = b;
-    if (k < MAX_VIEW_HITS) {
-        hitHalf[k] = sqrt(max(radius * radius - offRay, 0.0));
+    hitMid[hit] = alongRay;
+    if (hit < MAX_VIEW_HITS) {
+        hitHalf[hit] = sqrt(max(radius * radius - offRay, 0.0));
     }
-    hitReach[k] = sqrt(max(reach * reach - offRay, 0.0));
+    hitReach[hit] = sqrt(max(reach * reach - offRay, 0.0));
 }
 
 // THE VIEW RAY'S PUFF INTERVALS, SORTED AND MERGED INTO DISJOINT SPANS.
@@ -244,51 +244,51 @@ struct Field {
     float skyDepth;    // ... AND STRAIGHT UP
 };
 
-// p IS THE VIEW RAY AT t.
-Field puffField(vec3 p, float t) {
+// samplePos IS THE VIEW RAY AT t.
+Field puffField(vec3 samplePos, float t) {
     float weightSum = 0.0;
     float densitySum = 0.0;
     vec3 lightSum = vec3(0.0);   // SKY LIGHT, BLOCK LIGHT, HEIGHT
     vec2 depthSum = vec2(0.0);   // THE CENTERS' OPTICAL DEPTHS TOWARD THE LIGHT / SKY
     vec2 offsetSum = vec2(0.0);  // HOW FAR TOWARD THE LIGHT / SKY THE POINT IS FROM EACH CENTER
 
-    for (int k = 0; k < MAX_VIEW_HITS; k++) {
-        if (k >= viewHitCount) {
+    for (int hit = 0; hit < MAX_VIEW_HITS; hit++) {
+        if (hit >= viewHitCount) {
             break;
         }
 
-        if (abs(t - hitMid[k]) >= hitHalf[k]) {
+        if (abs(t - hitMid[hit]) >= hitHalf[hit]) {
             continue;
         }
 
-        int i = hitPuff(k);
-        vec4 shape = Puffs[i].shape;
-        vec4 data = Puffs[i].data;
-        vec3 d = p - shape.xyz;
-        float d2 = dot(d, d) * data.y;
-        if (d2 >= 1.0) {
+        int puffIndex = hitPuff(hit);
+        vec4 shape = Puffs[puffIndex].shape;
+        vec4 data = Puffs[puffIndex].data;
+        vec3 offset = samplePos - shape.xyz;
+        float distanceSquared = dot(offset, offset) * data.y;
+        if (distanceSquared >= 1.0) {
             continue;
         }
 
-        uvec4 bits = Puffs[i].bits;
-        vec4 lo = vec4(bits & 0xFFFFu);
-        vec4 hi = vec4(bits >> 16u);
-        vec2 light = vec2(lo.x, hi.x) / 65535.0;
+        uvec4 bits = Puffs[puffIndex].bits;
+        vec4 lowHalves = vec4(bits & 0xFFFFu);
+        vec4 highHalves = vec4(bits >> 16u);
+        vec2 light = vec2(lowHalves.x, highHalves.x) / 65535.0;
 
         // HOW FAR THE POINT IS FROM THE NEAREST WALL AROUND THIS PUFF (NEGATIVE PAST IT).
-        vec3 below = vec3(lo.y, hi.y, lo.z) * WALL_STEP - WALL_RANGE;
-        vec3 above = vec3(hi.z, lo.w, hi.w) * WALL_STEP - WALL_RANGE;
-        vec3 fromBelow = d - below;
-        vec3 toAbove = above - d;
+        vec3 below = vec3(lowHalves.y, highHalves.y, lowHalves.z) * WALL_STEP - WALL_RANGE;
+        vec3 above = vec3(highHalves.z, lowHalves.w, highHalves.w) * WALL_STEP - WALL_RANGE;
+        vec3 fromBelow = offset - below;
+        vec3 toAbove = above - offset;
         float room = min(min(min(fromBelow.x, fromBelow.y), fromBelow.z), min(min(toAbove.x, toAbove.y), toAbove.z));
 
-        float w = 1.0 - d2;
-        w = w * w * smoothstep(-WALL_FADE_INSIDE, WALL_FADE_BEFORE, room);
-        weightSum += w;
-        densitySum += w * data.x;
-        lightSum += w * vec3(light, clamp(d.y / shape.w * 0.5 + 0.5, 0.0, 1.0));
-        depthSum += w * data.zw;
-        offsetSum += w * vec2(dot(d, LightDirection.xyz), d.y);
+        float weight = 1.0 - distanceSquared;
+        weight = weight * weight * smoothstep(-WALL_FADE_INSIDE, WALL_FADE_BEFORE, room);
+        weightSum += weight;
+        densitySum += weight * data.x;
+        lightSum += weight * vec3(light, clamp(offset.y / shape.w * 0.5 + 0.5, 0.0, 1.0));
+        depthSum += weight * data.zw;
+        offsetSum += weight * vec2(dot(offset, LightDirection.xyz), offset.y);
     }
 
     float inverseWeight = 1.0 / max(weightSum, 1e-4);
@@ -308,61 +308,61 @@ Field puffField(vec3 p, float t) {
     return field;
 }
 
-// THE SAME FIELD WITHOUT THE LIGHTING OR WALLS, OVER EVERY PUFF THAT CAN SHADOW THE RAY. p IS
-// WITHIN SHADOW_REACH OF THE VIEW RAY AT viewT.
-vec2 puffCoverage(vec3 p, float viewT) {
+// THE SAME FIELD WITHOUT THE LIGHTING OR WALLS, OVER EVERY PUFF THAT CAN SHADOW THE RAY.
+// samplePos IS WITHIN SHADOW_REACH OF THE VIEW RAY AT viewT.
+vec2 puffCoverage(vec3 samplePos, float viewT) {
     float densitySum = 0.0;
     float weightSum = 0.0;
 
-    for (int k = 0; k < MAX_HITS; k++) {
-        if (k >= hitCount) {
+    for (int hit = 0; hit < MAX_HITS; hit++) {
+        if (hit >= hitCount) {
             break;
         }
 
-        if (abs(viewT - hitMid[k]) >= hitReach[k]) {
+        if (abs(viewT - hitMid[hit]) >= hitReach[hit]) {
             continue;
         }
 
-        int i = hitPuff(k);
-        vec4 data = Puffs[i].data;
-        vec3 d = p - Puffs[i].shape.xyz;
-        float d2 = dot(d, d) * data.y;
-        if (d2 >= 1.0) {
+        int puffIndex = hitPuff(hit);
+        vec4 data = Puffs[puffIndex].data;
+        vec3 offset = samplePos - Puffs[puffIndex].shape.xyz;
+        float distanceSquared = dot(offset, offset) * data.y;
+        if (distanceSquared >= 1.0) {
             continue;
         }
 
-        float w = 1.0 - d2;
-        w = w * w;
-        densitySum += w * data.x;
-        weightSum += w;
+        float weight = 1.0 - distanceSquared;
+        weight = weight * weight;
+        densitySum += weight * data.x;
+        weightSum += weight;
     }
 
     return vec2(clamp(weightSum * FIELD_COVERAGE_SCALE, 0.0, 1.0), densitySum / max(weightSum, 1e-4));
 }
 
-vec3 warpOffset(vec3 wp, float time) {
-    vec2 n = atlas3(WarpSampler, wp / WARP_SCALE + WARP_SCROLL * time, WARP_SIZE, WARP_GRID) - 0.5;
-    return (n.x * WARP_U + n.y * WARP_V) * WARP_STRENGTH;
+vec3 warpOffset(vec3 noisePos, float time) {
+    vec2 noise = atlas3(WarpSampler, noisePos / WARP_SCALE + WARP_SCROLL * time, WARP_SIZE, WARP_GRID) - 0.5;
+    return (noise.x * WARP_U + noise.y * WARP_V) * WARP_STRENGTH;
 }
 
 // BASE SHAPE: ERODE THE SMOOTH FIELD WITH LOW-FREQUENCY PERLIN-WORLEY. EVEN FULLY
 // COVERED REGIONS KEEP SOME EROSION SO THE CORE NEVER LOOKS LIKE SMOOTH FOG.
-float baseShape(vec3 wp, vec3 warp, float coverage, float time) {
-    float shape = atlas3(ShapeSampler, (wp + warp) / SHAPE_SCALE + SHAPE_SCROLL * time, SHAPE_SIZE, SHAPE_GRID).x;
+float baseShape(vec3 noisePos, vec3 warp, float coverage, float time) {
+    float shape = atlas3(ShapeSampler, (noisePos + warp) / SHAPE_SCALE + SHAPE_SCROLL * time, SHAPE_SIZE, SHAPE_GRID).x;
     return remap(shape, 1.0 - coverage * 0.74, 1.0) * coverage;
 }
 
-// FULL-QUALITY DENSITY FOR VIEW SAMPLES (wp = WRAPPED WORLD POSITION). DETAIL (0-1)
+// FULL-QUALITY DENSITY FOR VIEW SAMPLES (noisePos = WRAPPED WORLD POSITION). DETAIL (0-1)
 // SCALES THE HIGH-FREQUENCY EROSION; AT 0 ITS NOISE FETCH IS SKIPPED.
-float gasDensity(vec3 wp, vec3 warp, float time, vec2 field, float height, float detailAmount) {
-    float density = baseShape(wp, warp, field.x, time);
+float gasDensity(vec3 noisePos, vec3 warp, float time, vec2 field, float height, float detailAmount) {
+    float density = baseShape(noisePos, warp, field.x, time);
     if (density <= 0.0) {
         return 0.0;
     }
 
     if (detailAmount > 0.0) {
         // DETAIL EROSION: BILLOWY ON TOP, WISPY UNDERNEATH, STRONGEST AT THE EDGES.
-        float detail = atlas3(ShapeSampler, (wp + warp * 0.55) / DETAIL_SCALE + DETAIL_SCROLL * time, SHAPE_SIZE, SHAPE_GRID).y;
+        float detail = atlas3(ShapeSampler, (noisePos + warp * 0.55) / DETAIL_SCALE + DETAIL_SCROLL * time, SHAPE_SIZE, SHAPE_GRID).y;
         detail = mix(1.0 - detail, detail, clamp(height * 1.6, 0.0, 1.0));
         density = mix(density, remap(density, detail * 0.55 * (1.0 - density * 0.45), 1.0), detailAmount);
     }
@@ -373,13 +373,13 @@ float gasDensity(vec3 wp, vec3 warp, float time, vec2 field, float height, float
 // CHEAPER DENSITY FOR SHADOW SAMPLES: NO DETAIL OCTAVE, AND IT REUSES THE VIEW SAMPLE'S
 // DOMAIN WARP INSTEAD OF FETCHING ITS OWN. THE WARP CHANGES OVER WARP_SCALE (4 BLOCKS),
 // WELL BEYOND SHADOW_REACH, SO SHADOWS STILL FOLLOW THE VISIBLE (WARPED) SHAPES.
-float shadowDensity(vec3 p, float viewT, vec3 warp, float time) {
-    vec2 field = puffCoverage(p, viewT);
+float shadowDensity(vec3 samplePos, float viewT, vec3 warp, float time) {
+    vec2 field = puffCoverage(samplePos, viewT);
     if (field.x <= 0.002) {
         return 0.0;
     }
 
-    return baseShape(p + NoiseOrigin.xyz, warp, field.x, time) * field.y * GasColor.w;
+    return baseShape(samplePos + NoiseOrigin.xyz, warp, field.x, time) * field.y * GasColor.w;
 }
 
 // -----------------------------------------------------------------------------
@@ -394,30 +394,30 @@ vec3 unprojectView(float deviceDepth) {
 int runsAtPixel() {
     vec2 ndc = (ProjMat * unprojectBase).xy;
     int runs = 0;
-    for (int r = 0; r < MAX_RECTS; r++) {
-        vec4 b = runBounds[r];
-        if (all(greaterThanEqual(ndc, b.xy)) && all(lessThanEqual(ndc, b.zw))) {
-            runs |= 1 << r;
+    for (int run = 0; run < MAX_RECTS; run++) {
+        vec4 bounds = runBounds[run];
+        if (all(greaterThanEqual(ndc, bounds.xy)) && all(lessThanEqual(ndc, bounds.zw))) {
+            runs |= 1 << run;
         }
     }
 
     return runs;
 }
 
-int runStart(int r) {
-    return r == 0 ? 0 : rectEnd(r - 1);
+int runStart(int run) {
+    return run == 0 ? 0 : rectEnd(run - 1);
 }
 
 // ONE BIT PER PUFF: WHETHER IT IS ON THE VIEW RAY'S HIT LIST.
 uint viewMask[MAX_PUFFS / 32];
 
-void setViewHit(int i, bool hit) {
-    uint bit = 1u << uint(i & 31);
-    viewMask[i >> 5] = hit ? viewMask[i >> 5] | bit : viewMask[i >> 5] & ~bit;
+void setViewHit(int puffIndex, bool hit) {
+    uint bit = 1u << uint(puffIndex & 31);
+    viewMask[puffIndex >> 5] = hit ? viewMask[puffIndex >> 5] | bit : viewMask[puffIndex >> 5] & ~bit;
 }
 
-bool isViewHit(int i) {
-    return (viewMask[i >> 5] & (1u << uint(i & 31))) != 0u;
+bool isViewHit(int puffIndex) {
+    return (viewMask[puffIndex >> 5] & (1u << uint(puffIndex & 31))) != 0u;
 }
 
 // A PIXEL WITH NO VISIBLE GAS. gasT IS WHERE TEMPORAL SMOOTHING REPROJECTS IT FROM.
@@ -432,18 +432,18 @@ void writeEmpty(float sceneDistance, float gasT) {
 
 void main() {
     int puffCount = min(Counts.x, MAX_PUFFS);
-    for (int w = 0; w < MAX_HITS / 4; w++) {
-        hitWords[w] = 0u;
+    for (int word = 0; word < MAX_HITS / 4; word++) {
+        hitWords[word] = 0u;
     }
-    for (int w = 0; w < MAX_PUFFS / 32; w++) {
-        viewMask[w] = 0u;
+    for (int word = 0; word < MAX_PUFFS / 32; word++) {
+        viewMask[word] = 0u;
     }
 
     int runs = runsAtPixel();
 
-    vec3 ro;
-    vec3 rd;
-    viewRay(unprojectBase, unprojectDepth, ro, rd);
+    vec3 rayOrigin;
+    vec3 rayDir;
+    viewRay(unprojectBase, unprojectDepth, rayOrigin, rayDir);
     mat3 viewToWorld = mat3(ViewToWorld);
 
     // DISTANCE ALONG THE RAY TO THE OPAQUE SCENE (SKY = 0 = INFINITELY FAR). AT REDUCED
@@ -456,7 +456,7 @@ void main() {
     float sceneDistance = 1e6;
     if (deviceDepth > 0.0) {
         vec3 sceneView = unprojectView(deviceDepth);
-        sceneT = max(dot(viewToWorld * sceneView - ro, rd), 0.0);
+        sceneT = max(dot(viewToWorld * sceneView - rayOrigin, rayDir), 0.0);
         sceneDistance = length(sceneView);
     }
 
@@ -474,58 +474,58 @@ void main() {
 
     int weakest = -1;          // THE FULL LIST'S WEAKEST HIT (-1 = NOT YET FOUND)
     float weakestGas = 0.0;
-    for (int r = 0; r < MAX_RECTS; r++) {
-        if ((runs & (1 << r)) == 0) {
+    for (int run = 0; run < MAX_RECTS; run++) {
+        if ((runs & (1 << run)) == 0) {
             continue;
         }
 
-        int runEnd = min(rectEnd(r), puffCount);
-        for (int i = runStart(r); i < runEnd; i++) {
-            vec4 shape = Puffs[i].shape;
-            vec3 toCenter = shape.xyz - ro;
-            float b = dot(toCenter, rd);
-            float h = b * b - (dot(toCenter, toCenter) - shape.w * shape.w);
-            if (h <= 0.0) {
+        int runEnd = min(rectEnd(run), puffCount);
+        for (int puffIndex = runStart(run); puffIndex < runEnd; puffIndex++) {
+            vec4 shape = Puffs[puffIndex].shape;
+            vec3 toCenter = shape.xyz - rayOrigin;
+            float alongRay = dot(toCenter, rayDir);
+            float halfChord = alongRay * alongRay - (dot(toCenter, toCenter) - shape.w * shape.w);
+            if (halfChord <= 0.0) {
                 continue;
             }
 
-            h = sqrt(h);
-            float t0 = max(b - h, 0.0);
-            float t1 = min(b + h, gasLimit);
-            if (t1 <= t0) {
+            halfChord = sqrt(halfChord);
+            float enterT = max(alongRay - halfChord, 0.0);
+            float exitT = min(alongRay + halfChord, gasLimit);
+            if (exitT <= enterT) {
                 continue;
             }
 
             if (hitCount < MAX_VIEW_HITS) {
-                spanStart[hitCount] = t0;
-                spanEnd[hitCount] = t1;
-                setViewHit(i, true);
-                setWindow(hitCount, toCenter, b, shape.w);
-                addHit(i);
+                spanStart[hitCount] = enterT;
+                spanEnd[hitCount] = exitT;
+                setViewHit(puffIndex, true);
+                setWindow(hitCount, toCenter, alongRay, shape.w);
+                addHit(puffIndex);
                 continue;
             }
 
             if (weakest < 0) {
                 weakestGas = 1e30;
-                for (int k = 0; k < MAX_VIEW_HITS; k++) {
-                    float gas = Puffs[hitPuff(k)].data.x * (spanEnd[k] - spanStart[k]);
+                for (int hit = 0; hit < MAX_VIEW_HITS; hit++) {
+                    float gas = Puffs[hitPuff(hit)].data.x * (spanEnd[hit] - spanStart[hit]);
                     if (gas < weakestGas) {
                         weakestGas = gas;
-                        weakest = k;
+                        weakest = hit;
                     }
                 }
             }
 
-            if (Puffs[i].data.x * (t1 - t0) <= weakestGas) {
+            if (Puffs[puffIndex].data.x * (exitT - enterT) <= weakestGas) {
                 continue;
             }
 
             setViewHit(hitPuff(weakest), false);
-            setViewHit(i, true);
-            spanStart[weakest] = t0;
-            spanEnd[weakest] = t1;
-            setWindow(weakest, toCenter, b, shape.w);
-            setHit(weakest, i);
+            setViewHit(puffIndex, true);
+            spanStart[weakest] = enterT;
+            spanEnd[weakest] = exitT;
+            setWindow(weakest, toCenter, alongRay, shape.w);
+            setHit(weakest, puffIndex);
             weakest = -1;
         }
     }
@@ -537,49 +537,49 @@ void main() {
     }
 
     // SORT THE INTERVALS BY START (INSERTION SORT; THERE ARE FEW) AND MERGE OVERLAPS.
-    for (int a = 1; a < MAX_VIEW_HITS; a++) {
-        if (a >= viewHitCount) {
+    for (int hit = 1; hit < MAX_VIEW_HITS; hit++) {
+        if (hit >= viewHitCount) {
             break;
         }
 
-        float s = spanStart[a];
-        float e = spanEnd[a];
-        int j = a;
-        for (; j > 0; j--) {
-            if (spanStart[j - 1] <= s) {
+        float start = spanStart[hit];
+        float end = spanEnd[hit];
+        int slot = hit;
+        for (; slot > 0; slot--) {
+            if (spanStart[slot - 1] <= start) {
                 break;
             }
 
-            spanStart[j] = spanStart[j - 1];
-            spanEnd[j] = spanEnd[j - 1];
+            spanStart[slot] = spanStart[slot - 1];
+            spanEnd[slot] = spanEnd[slot - 1];
         }
 
-        spanStart[j] = s;
-        spanEnd[j] = e;
+        spanStart[slot] = start;
+        spanEnd[slot] = end;
     }
 
     spanCount = 1;
-    for (int a = 1; a < MAX_VIEW_HITS; a++) {
-        if (a >= viewHitCount) {
+    for (int hit = 1; hit < MAX_VIEW_HITS; hit++) {
+        if (hit >= viewHitCount) {
             break;
         }
 
-        if (spanStart[a] <= spanEnd[spanCount - 1]) {
-            spanEnd[spanCount - 1] = max(spanEnd[spanCount - 1], spanEnd[a]);
+        if (spanStart[hit] <= spanEnd[spanCount - 1]) {
+            spanEnd[spanCount - 1] = max(spanEnd[spanCount - 1], spanEnd[hit]);
         } else {
-            spanStart[spanCount] = spanStart[a];
-            spanEnd[spanCount] = spanEnd[a];
+            spanStart[spanCount] = spanStart[hit];
+            spanEnd[spanCount] = spanEnd[hit];
             spanCount++;
         }
     }
 
     float covered = 0.0;
-    for (int a = 0; a < MAX_VIEW_HITS; a++) {
-        if (a >= spanCount) {
+    for (int spanIndex = 0; spanIndex < MAX_VIEW_HITS; spanIndex++) {
+        if (spanIndex >= spanCount) {
             break;
         }
 
-        covered += spanEnd[a] - spanStart[a];
+        covered += spanEnd[spanIndex] - spanStart[spanIndex];
     }
 
     float tStart = spanStart[0];
@@ -593,41 +593,41 @@ void main() {
     // PUFFS HAPPEN TO BE IN VIEW AND CHANGE AS THE CAMERA TURNS. ONLY NEEDED WHERE THE SHADOW
     // MARCH RUNS (NOT ALL THE WAY INSIDE THE GAS, NOR PAST DETAIL_LOD_END).
     if (directStrength > 0.0 && immersion < 1.0 && tStart < DETAIL_LOD_END) {
-        for (int r = 0; r < MAX_RECTS; r++) {
+        for (int run = 0; run < MAX_RECTS; run++) {
             if (hitCount >= MAX_HITS) {
                 break;
             }
 
-            if ((runs & (1 << r)) == 0) {
+            if ((runs & (1 << run)) == 0) {
                 continue;
             }
 
-            int runEnd = min(rectEnd(r), puffCount);
-            for (int i = runStart(r); i < runEnd; i++) {
+            int runEnd = min(rectEnd(run), puffCount);
+            for (int puffIndex = runStart(run); puffIndex < runEnd; puffIndex++) {
                 if (hitCount >= MAX_HITS) {
                     break;
                 }
 
-                if (isViewHit(i)) {
+                if (isViewHit(puffIndex)) {
                     continue;
                 }
 
-                vec4 shape = Puffs[i].shape;
+                vec4 shape = Puffs[puffIndex].shape;
                 float reach = shape.w + SHADOW_REACH;
-                vec3 toCenter = shape.xyz - ro;
-                float b = dot(toCenter, rd);
-                float h = b * b - (dot(toCenter, toCenter) - reach * reach);
-                if (h <= 0.0) {
+                vec3 toCenter = shape.xyz - rayOrigin;
+                float alongRay = dot(toCenter, rayDir);
+                float halfChord = alongRay * alongRay - (dot(toCenter, toCenter) - reach * reach);
+                if (halfChord <= 0.0) {
                     continue;
                 }
 
-                h = sqrt(h);
-                if (b + h <= tStart || b - h >= tEnd) {
+                halfChord = sqrt(halfChord);
+                if (alongRay + halfChord <= tStart || alongRay - halfChord >= tEnd) {
                     continue;
                 }
 
-                setWindow(hitCount, toCenter, b, shape.w);
-                addHit(i);
+                setWindow(hitCount, toCenter, alongRay, shape.w);
+                addHit(puffIndex);
             }
         }
     }
@@ -639,10 +639,10 @@ void main() {
     float stepSize = BASE_STEP * clamp(tStart / STEP_LOD_START, 1.0, MAX_STEP_SCALE);
     int maxSteps = clamp(Counts.y, 12, MAX_VIEW_STEPS);
     int steps = int(clamp(ceil(covered / stepSize), 12.0, float(maxSteps)));
-    float dt = covered / float(steps);
+    float stepLength = covered / float(steps);
 
     float time = NoiseOrigin.w;
-    float cosTheta = dot(rd, lightDir);
+    float cosTheta = dot(rayDir, lightDir);
     int shadowSteps = clamp(Counts.z, 1, MAX_SHADOW_STEPS);
     float firstShadowStep = SHADOW_REACH * (SHADOW_GROWTH - 1.0) / (pow(SHADOW_GROWTH, float(shadowSteps)) - 1.0);
 
@@ -667,15 +667,15 @@ void main() {
     float weightTotal = 0.0;
 
     int span = 0;
-    float t = tStart + dt * jitter;
-    for (int s = 0; s < MAX_VIEW_STEPS; s++) {
-        if (s >= steps || transmittance < MIN_TRANSMITTANCE) {
+    float t = tStart + stepLength * jitter;
+    for (int viewStep = 0; viewStep < MAX_VIEW_STEPS; viewStep++) {
+        if (viewStep >= steps || transmittance < MIN_TRANSMITTANCE) {
             break;
         }
 
         // STEPPING PAST THE END OF A SPAN CARRIES THE REMAINDER INTO THE NEXT ONE, SO SAMPLES
         // STAY EVENLY SPACED ALONG THE GAS AND THE GAPS BETWEEN SPANS ARE SKIPPED.
-        for (int g = 0; g < MAX_VIEW_HITS; g++) {
+        for (int skip = 0; skip < MAX_VIEW_HITS; skip++) {
             if (t <= spanEnd[span] || span + 1 >= spanCount) {
                 break;
             }
@@ -684,20 +684,20 @@ void main() {
             span++;
         }
 
-        vec3 p = ro + rd * t;
-        Field field = puffField(p, t);
+        vec3 samplePos = rayOrigin + rayDir * t;
+        Field field = puffField(samplePos, t);
 
         if (field.coverage > 0.002) {
-            vec3 wp = p + NoiseOrigin.xyz;
+            vec3 noisePos = samplePos + NoiseOrigin.xyz;
             if (t - warpT >= WARP_REUSE) {
-                warp = warpOffset(wp, time);
+                warp = warpOffset(noisePos, time);
                 warpT = t;
             }
             float detailAmount = 1.0 - smoothstep(DETAIL_LOD_START, DETAIL_LOD_END, t);
-            float density = gasDensity(wp, warp, time, vec2(field.coverage, field.density), field.height, detailAmount);
+            float density = gasDensity(noisePos, warp, time, vec2(field.coverage, field.density), field.height, detailAmount);
 
             if (density > 0.001) {
-                float sigmaT = density * EXTINCTION;
+                float extinctionCoefficient = density * EXTINCTION;
                 float smoothDensity = field.coverage * field.density * SHADOW_FILL;
 
                 // DIRECT LIGHT IS GATED BY THE PUFF'S SKY ACCESS (NO SUN IN CAVES).
@@ -717,12 +717,12 @@ void main() {
                             float marched = 0.0;
                             float lightStep = firstShadowStep;
                             float lightT = lightStep * (0.5 + jitter * 0.5);
-                            for (int l = 0; l < MAX_SHADOW_STEPS; l++) {
-                                if (l >= shadowSteps) {
+                            for (int shadowStep = 0; shadowStep < MAX_SHADOW_STEPS; shadowStep++) {
+                                if (shadowStep >= shadowSteps) {
                                     break;
                                 }
 
-                                marched += shadowDensity(p + lightDir * lightT, t, warp, time) * lightStep;
+                                marched += shadowDensity(samplePos + lightDir * lightT, t, warp, time) * lightStep;
                                 lightStep *= SHADOW_GROWTH;
                                 lightT += lightStep;
                             }
@@ -747,7 +747,7 @@ void main() {
                     direct *= 1.0 / 1.75;
 
                     // POWDER TERM: DARKENS THIN EDGES FACING AWAY FROM THE LIGHT.
-                    float powder = 1.0 - exp(-sigmaT * 1.6);
+                    float powder = 1.0 - exp(-extinctionCoefficient * 1.6);
                     direct *= mix(1.0, powder * 1.6, powderMix);
 
                     directLight = LightColor.rgb * direct * sunVisibility;
@@ -765,7 +765,7 @@ void main() {
                 vec3 inScatter = albedo * (directLight + ambient);
 
                 // 4. ENERGY-CONSERVING INTEGRATION OF THE STEP.
-                float stepTransmittance = exp(-sigmaT * dt);
+                float stepTransmittance = exp(-extinctionCoefficient * stepLength);
                 float absorbed = transmittance * (1.0 - stepTransmittance);
                 radiance += inScatter * absorbed;
                 weightedDistance += t * absorbed;
@@ -774,7 +774,7 @@ void main() {
             }
         }
 
-        t += dt;
+        t += stepLength;
     }
 
     float alpha = 1.0 - transmittance;
@@ -785,7 +785,7 @@ void main() {
 
     // 5. VANILLA FOG AT THE OPACITY-WEIGHTED DEPTH OF THE GAS.
     float fogDistance = weightedDistance / max(weightTotal, 1e-4);
-    vec3 fogPosition = ro + rd * fogDistance;
+    vec3 fogPosition = rayOrigin + rayDir * fogDistance;
     float fogValue = total_fog_value(
         fog_spherical_distance(fogPosition),
         fog_cylindrical_distance(fogPosition),

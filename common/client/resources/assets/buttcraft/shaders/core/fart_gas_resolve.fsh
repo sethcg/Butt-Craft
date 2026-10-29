@@ -44,21 +44,21 @@ void main() {
         return;
     }
 
-    vec4 lo = current;
-    vec4 hi = current;
-    for (int i = 0; i < 9; i++) {
-        ivec2 offset = ivec2(i % 3, i / 3) - 1;
+    vec4 minNeighbour = current;
+    vec4 maxNeighbour = current;
+    for (int neighbourIndex = 0; neighbourIndex < 9; neighbourIndex++) {
+        ivec2 offset = ivec2(neighbourIndex % 3, neighbourIndex / 3) - 1;
         vec4 neighbour = texelFetch(GasSampler, clamp(texel + offset, ivec2(0), size - 1), 0);
-        lo = min(lo, neighbour);
-        hi = max(hi, neighbour);
+        minNeighbour = min(minNeighbour, neighbour);
+        maxNeighbour = max(maxNeighbour, neighbour);
     }
 
     // 1. WHERE THE GAS (OR, WITH NONE, THE SCENE) WAS RELATIVE TO LAST FRAME'S CAMERA...
-    vec3 ro;
-    vec3 rd;
-    viewRay(unprojectBase, unprojectDepth, ro, rd);
+    vec3 rayOrigin;
+    vec3 rayDir;
+    viewRay(unprojectBase, unprojectDepth, rayOrigin, rayDir);
     float gasT = texelFetch(GasDistanceSampler, texel, 0).y;
-    vec3 previousWorld = ro + rd * gasT + CameraMotion.xyz;
+    vec3 previousWorld = rayOrigin + rayDir * gasT + CameraMotion.xyz;
 
     // ...AND WHERE LAST FRAME'S PROJECTION (BOBBING INCLUDED) PUT IT ON SCREEN.
     mat4 previousProjection = mat4(
@@ -80,6 +80,6 @@ void main() {
     }
 
     // 2 + 3.
-    vec4 history = clamp(texture(HistorySampler, uv), lo, hi);
+    vec4 history = clamp(texture(HistorySampler, uv), minNeighbour, maxNeighbour);
     fragColor = mix(current, history, CameraMotion.w);
 }
