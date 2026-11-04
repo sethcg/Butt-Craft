@@ -20,13 +20,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * SPLASH AND LINGERING FARTS SHOW THE STENCH I THEY REALLY GIVE, INSTEAD OF THE
- * BOTTLE'S STENCH II.
- *
- * <p>THE POTION'S OWN TOOLTIP ONLY SEES THE COMPONENTS, NOT THE ITEM, SO THIS HOOKS IN
- * WHERE THE STACK HANDS THE POTION CONTENTS ITS TOOLTIP.
- */
+// SPLASH AND LINGERING FARTS SHOW THE STENCH I THEY REALLY GIVE. THE POTION'S OWN TOOLTIP ONLY SEES
+// THE COMPONENTS, NOT THE ITEM, SO THIS HOOKS IN WHERE THE STACK HANDS IT THE POTION CONTENTS
 @Mixin(ItemStack.class)
 public abstract class ItemStackMixin {
 
@@ -53,7 +48,7 @@ public abstract class ItemStackMixin {
             return;
         }
 
-        // THE DURATION IS ALREADY THE REAL ONE, SO NO LINGERING DURATION SCALE
+        // THE DURATION IS ALREADY THE REAL ONE, SO NO LINGERING SCALE
         if (display.shows(type)) {
             PotionContents.addPotionTooltip(List.of(thrown.stench()), lines, 1.0F, context.tickRate());
         }

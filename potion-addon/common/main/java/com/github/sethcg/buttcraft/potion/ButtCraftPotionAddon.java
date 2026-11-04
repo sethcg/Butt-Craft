@@ -15,10 +15,8 @@ public class ButtCraftPotionAddon implements ModInitializer {
     @Override
     public void onInitialize() {
 
-        // REGISTER THE BOTTLED FART POTION
         FartPotions.initialize();
 
-        // LET GLASS BOTTLES SCOOP UP FART CLOUDS
         FartBottling.initialize();
 
         LOGGER.info("BUTTCRAFT POTION ADDON INITIALIZED.");

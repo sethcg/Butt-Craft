@@ -11,12 +11,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/**
- * THE RECIPE BOOK DOESN'T PULL A LINGERING FART INTO THE TIPPED ARROW RECIPE.
- *
- * <p>THE RECIPE BOOK ONLY LOOKS AT THE ITEM, NOT THE POTION, SO ANY LINGERING POTION
- * COUNTS. THIS IS THE SAME CHECK THAT KEEPS DAMAGED, ENCHANTED AND RENAMED ITEMS OUT OF IT.
- */
+// THE RECIPE BOOK ONLY LOOKS AT THE ITEM, NOT THE POTION, SO IT WOULD PULL A LINGERING FART INTO
+// THE TIPPED ARROW RECIPE. THIS IS THE CHECK THAT KEEPS DAMAGED, ENCHANTED AND RENAMED ITEMS OUT
 @Mixin(Inventory.class)
 public abstract class InventoryMixin {
 

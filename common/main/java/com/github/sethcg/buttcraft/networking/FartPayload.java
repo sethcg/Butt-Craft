@@ -9,12 +9,7 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.world.phys.Vec3;
 
-/**
- * A FART FOR NEARBY CLIENTS TO HEAR AND SEE. EITHER A PLAYER'S FART (BLOWN BACKWARD FROM pos,
- * FACING yaw) OR A BURST THAT SPREADS OUT AROUND pos (E.G. A SPLASH POTION) FOR lifetimeTicks.
- * EVERY CLIENT SEEDS THE GAS'S RANDOMNESS WITH seed, SO THEY ALL SEE THE SAME CLOUD. USE
- * {@link #fart} / {@link #burst}.
- */
+// EVERY CLIENT SEEDS THE GAS'S RANDOMNESS WITH seed, SO THEY ALL SEE THE SAME CLOUD
 public record FartPayload(Vec3 pos, boolean burst, float yaw, int lifetimeTicks, int seed) implements CustomPacketPayload {
 
     public static final Type<FartPayload> TYPE = new Type<>(ButtCraft.id("fart"));

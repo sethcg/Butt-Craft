@@ -12,12 +12,6 @@ import net.minecraft.world.entity.LivingEntity;
 
 import org.jspecify.annotations.Nullable;
 
-/**
- * DAMAGE FROM LINGERING FART GAS, CREDITED TO THE PLAYER WHO FARTED.
- *
- * <p>PICKS A RANDOM DEATH MESSAGE FROM THE LANG FILE, DEPENDING ON WHETHER THE VICTIM
- * DIED TO THEIR OWN GAS OR TO SOMEONE ELSE'S.
- */
 public final class FartGasDamageSource extends DamageSource {
 
     private static final ResourceKey<DamageType> TYPE = ResourceKey.create(
@@ -25,7 +19,7 @@ public final class FartGasDamageSource extends DamageSource {
         ButtCraft.id("fart_gas")
     );
 
-    // DEATH MESSAGES: death.attack.buttcraft.fart_gas[.self|.player].<NUMBER>
+    // LANG KEYS: death.attack.buttcraft.fart_gas[.self|.player].<NUMBER>
     private static final String MESSAGE_KEY = "death.attack." + ButtCraft.MOD_ID + ".fart_gas";
     private static final int UNKNOWN_MESSAGES = 5;
     private static final int SELF_MESSAGES = 9;
@@ -39,12 +33,12 @@ public final class FartGasDamageSource extends DamageSource {
         return create(type(level), farter);
     }
 
-    /** FOR DEALING MANY HITS AT ONCE: LOOK THE TYPE UP ONCE WITH {@link #type}. */
+    // FOR DEALING MANY HITS AT ONCE: LOOK THE TYPE UP ONCE WITH type
     public static FartGasDamageSource create(Holder<DamageType> type, @Nullable Entity farter) {
         return new FartGasDamageSource(type, farter);
     }
 
-    // NOT CACHED STATICALLY: DAMAGE TYPES ARE PER-WORLD REGISTRY ENTRIES.
+    // NOT CACHED STATICALLY: DAMAGE TYPES ARE PER-WORLD REGISTRY ENTRIES
     public static Holder<DamageType> type(ServerLevel level) {
         return level.registryAccess()
             .lookupOrThrow(Registries.DAMAGE_TYPE)
@@ -55,7 +49,7 @@ public final class FartGasDamageSource extends DamageSource {
     public Component getLocalizedDeathMessage(LivingEntity victim) {
         Entity farter = this.getEntity();
 
-        // THE FARTER LEFT BEFORE THEIR GAS FINISHED THE JOB
+        // THE FARTER LEFT, OR THE STENCH EFFECT (WHICH CREDITS NO ONE) DEALT THE DAMAGE
         if (farter == null) {
             return Component.translatable(
                 MESSAGE_KEY + "." + victim.getRandom().nextInt(UNKNOWN_MESSAGES),
@@ -63,7 +57,6 @@ public final class FartGasDamageSource extends DamageSource {
             );
         }
 
-        // DIED TO THEIR OWN GAS
         if (farter == victim) {
             return Component.translatable(
                 MESSAGE_KEY + ".self." + victim.getRandom().nextInt(SELF_MESSAGES),
@@ -71,7 +64,6 @@ public final class FartGasDamageSource extends DamageSource {
             );
         }
 
-        // DIED TO SOMEONE ELSE'S GAS
         return Component.translatable(
             MESSAGE_KEY + ".player." + victim.getRandom().nextInt(PLAYER_MESSAGES),
             victim.getDisplayName(),

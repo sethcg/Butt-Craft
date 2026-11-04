@@ -10,16 +10,8 @@ import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectCategory;
 import net.minecraft.world.entity.LivingEntity;
 
-/**
- * CUSTOM STATUS EFFECTS.
- *
- * <p>THE NAME COMES FROM THE LANG FILE (effect.buttcraft.stench), VANILLA ADDS THE "II"
- * FOR AMPLIFIER 1. THE ICON IS assets/buttcraft/textures/mob_effect/stench.png (36x36, DRAWN AT
- * 18x18, IN THE CLIENT RESOURCES).
- */
 public final class ModEffects {
 
-    // SICKLY GREEN-BROWN (SAME FORMAT AS VANILLA, 0xRRGGBB)
     private static final int STENCH_COLOR = 0x7A8C2E;
 
     public static final Holder<MobEffect> STENCH = Registry.registerForHolder(
@@ -31,11 +23,10 @@ public final class ModEffects {
     private ModEffects() {
     }
 
-    /** LOADS THIS CLASS, WHICH REGISTERS THE EFFECTS. */
     public static void initialize() {
     }
 
-    // MOBS THAT IGNORE POISON (UNDEAD) DON'T BREATHE, SO THEY CAN'T SMELL EITHER
+    // MOBS THAT IGNORE POISON ALSO IGNORE STENCH
     public static boolean canSmell(LivingEntity entity) {
         return !entity.is(EntityTypeTags.IGNORES_POISON_AND_REGEN);
     }

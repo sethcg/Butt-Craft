@@ -4,24 +4,17 @@
 #include <minecraft:projection.glsl>
 #include <buttcraft:fart_gas_common.glsl>
 
-// =============================================================================
-// BUTTCRAFT VOLUMETRIC FART GAS: TEMPORAL SMOOTHING
+// BLENDS THE JITTERED MARCH WITH LAST FRAME'S RESULT, SO EACH PIXEL AVERAGES MANY MORE SAMPLES:
 //
-// THE MARCHER JITTERS ITS SAMPLES DIFFERENTLY EVERY FRAME. THIS PASS (AT THE MARCH'S
-// RESOLUTION) BLENDS ITS RESULT WITH LAST FRAME'S, SO OVER A FEW FRAMES EACH PIXEL
-// AVERAGES MANY MORE SAMPLES THAN ONE MARCH TAKES:
-//
-//   1. FOLLOW THIS PIXEL'S RAY TO THE GAS (THE MARCHER WROTE HOW FAR ALONG IT THAT IS) AND
-//      FIND WHERE THAT POINT WAS ON SCREEN LAST FRAME, USING LAST FRAME'S CAMERA.
-//   2. READ LAST FRAME'S RESULT THERE AND CLAMP IT TO THE RANGE OF THIS FRAME'S 3x3
-//      NEIGHBOURHOOD, SO GAS THAT MOVED OR CHANGED DOESN'T LEAVE A TRAIL.
-//   3. BLEND (CameraMotion.w OF THE HISTORY; 0 WHEN THERE IS NONE).
-// =============================================================================
+//   1. FIND WHERE THE GAS ON THIS PIXEL'S RAY WAS ON SCREEN LAST FRAME
+//   2. READ LAST FRAME'S RESULT THERE AND CLAMP IT TO THIS FRAME'S 3x3 NEIGHBOURHOOD, SO GAS THAT
+//      MOVED OR CHANGED DOESN'T LEAVE A TRAIL
+//   3. BLEND
 
-uniform sampler2D GasSampler;                // THIS FRAME'S MARCH (PREMULTIPLIED)
-uniform sampler2D GasDistanceSampler;        // ITS DISTANCES (SEE fart_gas.fsh)
-uniform sampler2D HistorySampler;            // LAST FRAME'S RESULT
-uniform sampler2D PreviousProjectionSampler; // LAST FRAME'S ProjMat, ONE COLUMN PER TEXEL
+uniform sampler2D GasSampler;
+uniform sampler2D GasDistanceSampler;
+uniform sampler2D HistorySampler;
+uniform sampler2D PreviousProjectionSampler; // ONE COLUMN PER TEXEL
 
 layout(location = 0) in vec4 unprojectBase;
 layout(location = 1) in vec4 unprojectDepth;
@@ -33,9 +26,8 @@ void main() {
     ivec2 size = textureSize(GasSampler, 0);
     vec4 current = texelFetch(GasSampler, texel, 0);
 
-    // THIS PIXEL'S NDC, AND HOW MUCH NDC ONE PIXEL IS. TAKING BOTH FROM THE RASTERIZER (RATHER
-    // THAN ASSUMING WHICH WAY UP THE SCREEN IS) KEEPS THE REPROJECTION RIGHT ON EVERY BACKEND.
-    // (ProjMat UNDOES THE VERTEX SHADER'S UNPROJECTION EXACTLY: w IS 1.)
+    // TAKEN FROM THE RASTERIZER SO THE REPROJECTION IS RIGHT ON EVERY BACKEND, WHICHEVER WAY UP THE
+    // SCREEN IS. (ProjMat UNDOES THE VERTEX SHADER'S UNPROJECTION EXACTLY: w IS 1.)
     vec2 ndc = (ProjMat * unprojectBase).xy;
     vec2 ndcPerPixel = vec2(dFdx(ndc.x), dFdy(ndc.y));
 
@@ -53,14 +45,13 @@ void main() {
         maxNeighbour = max(maxNeighbour, neighbour);
     }
 
-    // 1. WHERE THE GAS (OR, WITH NONE, THE SCENE) WAS RELATIVE TO LAST FRAME'S CAMERA...
+    // WITH NO GAS, gasT IS THE DISTANCE TO THE SCENE
     vec3 rayOrigin;
     vec3 rayDir;
     viewRay(unprojectBase, unprojectDepth, rayOrigin, rayDir);
     float gasT = texelFetch(GasDistanceSampler, texel, 0).y;
     vec3 previousWorld = rayOrigin + rayDir * gasT + CameraMotion.xyz;
 
-    // ...AND WHERE LAST FRAME'S PROJECTION (BOBBING INCLUDED) PUT IT ON SCREEN.
     mat4 previousProjection = mat4(
         texelFetch(PreviousProjectionSampler, ivec2(0, 0), 0),
         texelFetch(PreviousProjectionSampler, ivec2(1, 0), 0),
@@ -79,7 +70,6 @@ void main() {
         return;
     }
 
-    // 2 + 3.
     vec4 history = clamp(texture(HistorySampler, uv), minNeighbour, maxNeighbour);
     fragColor = mix(current, history, CameraMotion.w);
 }

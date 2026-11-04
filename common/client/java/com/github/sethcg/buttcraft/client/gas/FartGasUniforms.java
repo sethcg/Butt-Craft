@@ -19,40 +19,34 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.phys.Vec3;
 
-/**
- * CONTENTS OF THE SHADERS' {@code FartGasInfo} UNIFORM BLOCK (STD140). THE LAYOUT HERE MUST
- * MATCH THE BLOCK IN {@code shaders/include/fart_gas_common.glsl}.
- *
- * <p>ONLY BUILDS THE BYTES; THE VERSION-SPECIFIC {@code FartGasRenderer} OWNS THE GPU BUFFER.
- */
+// THE LAYOUT MUST MATCH FartGasInfo (STD140) IN shaders/include/fart_gas_common.glsl
 public final class FartGasUniforms {
 
-    // CAMERA POSITION IS WRAPPED BY THE LCM OF THE SHADER'S NOISE PERIODS (4, 1.5, 0.5 BLOCKS).
+    public static final int RESOLUTION_DIVISOR = 4;
+    // fart_gas.fsh'S LOOP BOUNDS MUST STAY AT LEAST THESE
+    private static final int VIEW_STEPS = 20;
+    private static final int SHADOW_STEPS = 2;
+
+    // THE LCM OF THE SHADER'S NOISE PERIODS (4, 1.5, 0.5 BLOCKS)
     private static final double NOISE_PERIOD = 12.0;
     // EVERY NOISE SCROLL SPEED IN fart_gas.fsh TIMES THIS IS A WHOLE NUMBER, SO THE NOISE
-    // DOESN'T JUMP WHEN TIME WRAPS.
+    // DOESN'T JUMP WHEN TIME WRAPS
     private static final double TIME_PERIOD_SECONDS = 2000.0;
 
-    // HOW MUCH LIGHT THE GAS SCATTERS BACK. LOWER IS DARKER, WITHOUT CHANGING HOW OPAQUE IT IS.
     private static final Vector3fc GAS_ALBEDO = new Vector3f(0.48F, 0.63F, 0.31F);
     private static final float GAS_DENSITY = 1.6F;
 
-    // PUFFS FAINTER THAN THIS ARE NOT UPLOADED. THE SHADER STOPS COLLECTING SHADOW-ONLY PUFFS
-    // ONCE ITS HIT LIST IS FULL, SO THE REST ARE UPLOADED DENSEST FIRST. (ON THE VIEW RAY IT
-    // KEEPS THE PUFFS THAT ADD THE MOST GAS, WHATEVER THEIR ORDER.)
     private static final float MIN_VISIBLE_DENSITY = 0.002F;
 
-    // WALL OFFSETS ARE 16-BIT FIXED POINT: -WALL_RANGE TO +WALL_RANGE BLOCKS FROM THE PUFF'S CENTER,
-    // WALL_STEPS_PER_BLOCK TO A BLOCK. A SIDE WITH NO WALL NEARBY GOES AT THE END OF THE RANGE, WELL
-    // OUTSIDE THE PUFF. MUST MATCH WALL_RANGE / WALL_STEP IN fart_gas_common.glsl.
+    // 16-BIT FIXED POINT WALL OFFSETS FROM THE PUFF'S CENTER. A SIDE WITH NO WALL NEARBY GOES AT THE
+    // END OF THE RANGE. MUST MATCH WALL_RANGE / WALL_STEP IN fart_gas_common.glsl
     private static final float WALL_RANGE = 8.0F;
     private static final float WALL_STEPS_PER_BLOCK = 4096.0F;
 
-    // FIELD COVERAGE AT THE CAMERA WHERE IT STARTS COUNTING AS INSIDE THE GAS, AND WHERE FULLY.
     private static final float IMMERSION_START = 0.05F;
     private static final float IMMERSION_FULL = 0.4F;
 
-    // SORTING SCRATCH (RENDER THREAD ONLY).
+    // SORTING SCRATCH (RENDER THREAD ONLY)
     private static final long[] SORT_KEYS = new long[FartGasSimulation.MAX_PUFFS];
     private static final FartGasSimulation.Puff[] SORTED = new FartGasSimulation.Puff[FartGasSimulation.MAX_PUFFS];
     private static final float[] SORTED_DENSITY = new float[FartGasSimulation.MAX_PUFFS];
@@ -61,7 +55,6 @@ public final class FartGasUniforms {
     private static final int[] RECT_ORDER = new int[FartGasSimulation.MAX_RECTS];
     private static final int[] RECT_ENDS = new int[FartGasSimulation.MAX_RECTS];
 
-    /** SIZE OF THE BLOCK IN BYTES. */
     public static final int SIZE;
 
     static {
@@ -79,29 +72,19 @@ public final class FartGasUniforms {
         for (int runGroup = 0; runGroup < FartGasSimulation.MAX_RECTS / 4; runGroup++) {
             size.putIVec4();
         }
-        // EACH PUFF IS A Puff STRUCT (SEE fart_gas_common.glsl): TWO vec4s AND A uvec4.
         for (int puffIndex = 0; puffIndex < FartGasSimulation.MAX_PUFFS; puffIndex++) {
             size.putVec4().putVec4().putIVec4();
         }
         SIZE = size.get();
     }
 
-    /** THE DOMINANT CELESTIAL LIGHT (DIRECTION TOWARD IT, STRENGTH, COLOR) AND THE SKY AMBIENT COLOR. */
     public record Lighting(Vector3fc direction, float strength, Vector3fc color, Vector3fc ambient) {
     }
 
-    /**
-     * WHAT TEMPORAL SMOOTHING NEEDS ABOUT THE LAST FRAME: THE CAMERA'S MOVE SINCE THEN AND ITS
-     * ROTATION. frame VARIES THE MARCH'S JITTER; historyWeight 0 MEANS THERE IS NO USABLE HISTORY.
-     */
+    // frame VARIES THE MARCH'S JITTER; historyWeight 0 MEANS THERE IS NO USABLE HISTORY
     public record Temporal(int frame, float historyWeight, Vector3fc cameraMotion, Matrix4fc previousWorldToView) {
-        public static final Temporal NONE = new Temporal(0, 0.0F, new Vector3f(), new Matrix4f());
     }
 
-    /**
-     * puffs: HOW MANY PUFFS WERE UPLOADED (0 = NOTHING VISIBLE TO DRAW). rects: HOW MANY SCREEN
-     * RECTANGLES THEY FILL.
-     */
     public record Upload(int puffs, int rects) {
     }
 
@@ -112,7 +95,6 @@ public final class FartGasUniforms {
         ByteBuffer data,
         LevelRenderState levelState,
         List<FartGasSimulation.Puff> puffs,
-        FartGasSettings.Values quality,
         Lighting lighting,
         Temporal temporal
     ) {
@@ -144,14 +126,13 @@ public final class FartGasUniforms {
         Vector3fc motion = temporal.cameraMotion();
         builder.putVec4(motion.x(), motion.y(), motion.z(), temporal.historyWeight());
 
-        builder.putIVec4(count, quality.maxViewSteps(), quality.shadowSteps(), quality.resolutionDivisor());
+        builder.putIVec4(count, VIEW_STEPS, SHADOW_STEPS, RESOLUTION_DIVISOR);
         builder.putIVec4(temporal.frame(), rects, 0, 0);
         for (int run = 0; run < FartGasSimulation.MAX_RECTS; run += 4) {
             builder.putIVec4(RECT_ENDS[run], RECT_ENDS[run + 1], RECT_ENDS[run + 2], RECT_ENDS[run + 3]);
         }
 
-        // ONLY THE VISIBLE PUFFS: THE SHADERS NEVER READ PAST THE COUNT, SO THE REST OF THE
-        // ARRAY CAN HOLD WHATEVER WAS THERE BEFORE.
+        // THE SHADERS NEVER READ PAST THE COUNT, SO THE REST OF THE ARRAY CAN STAY STALE
         for (int puffIndex = 0; puffIndex < count; puffIndex++) {
             FartGasSimulation.Puff puff = GROUPED[puffIndex];
             float radius = puff.radius(partial);
@@ -172,11 +153,8 @@ public final class FartGasUniforms {
         return new Upload(count, rects);
     }
 
-    /**
-     * HOW FAR INSIDE THE GAS THE CAMERA IS, 0-1: THE SHADER'S SMOOTH FIELD COVERAGE AT THE CAMERA
-     * (WITHOUT WALLS OR NOISE), FROM IMMERSION_START TO IMMERSION_FULL. FROM INSIDE, THE GAS FILLS
-     * THE SCREEN, SO fart_gas.fsh SKIPS ITS SHADOW MARCH AND ONLY MARCHES THE NEAREST GAS.
-     */
+    // HOW FAR INSIDE THE GAS THE CAMERA IS (0-1). FROM INSIDE, THE GAS FILLS THE SCREEN, SO
+    // fart_gas.fsh SKIPS ITS SHADOW MARCH AND ONLY MARCHES THE NEAREST GAS
     private static float immersion(int count, Vec3 cameraPos, float partial) {
         float weightSum = 0.0F;
         for (int puffIndex = 0; puffIndex < count; puffIndex++) {
@@ -194,8 +172,6 @@ public final class FartGasUniforms {
         return smoothstep(IMMERSION_START, IMMERSION_FULL, Math.min(weightSum * FartGasSimulation.FIELD_COVERAGE_SCALE, 1.0F));
     }
 
-    // A WALL'S OFFSET FROM THE PUFF'S CENTER AS 16-BIT FIXED POINT (SEE WALL_RANGE), OR noWall
-    // IF THERE IS NONE ON THAT SIDE
     private static int wall(double coordinate, double center, float noWall) {
         double offset = Double.isFinite(coordinate) ? coordinate - center : noWall;
         return (int) Mth.clamp(Math.round((offset + WALL_RANGE) * WALL_STEPS_PER_BLOCK), 0L, 0xFFFFL);
@@ -205,14 +181,13 @@ public final class FartGasUniforms {
         return Math.round(Mth.clamp(value, 0.0F, 1.0F) * 0xFFFF);
     }
 
-    // TWO 16-BIT VALUES IN ONE uint, low IN THE LOW BITS
     private static int pack(int low, int high) {
         return low | high << 16;
     }
 
-    /** FILLS SORTED / SORTED_DENSITY WITH THE VISIBLE PUFFS, DENSEST FIRST, AND RETURNS HOW MANY. */
+    // DENSEST FIRST, BECAUSE THE SHADER STOPS COLLECTING SHADOW-ONLY PUFFS ONCE ITS HIT LIST IS FULL
+    // (ON THE VIEW RAY IT KEEPS THE PUFFS THAT ADD THE MOST GAS, WHATEVER THEIR ORDER.)
     private static int sortVisible(List<FartGasSimulation.Puff> puffs, float partial) {
-        // THE SIMULATION NEVER HOLDS MORE THAN MAX_PUFFS, SO EVERY VISIBLE PUFF GETS A KEY.
         int count = 0;
         int puffCount = Math.min(puffs.size(), SORT_KEYS.length);
         for (int puffIndex = 0; puffIndex < puffCount; puffIndex++) {
@@ -221,12 +196,10 @@ public final class FartGasUniforms {
                 continue;
             }
 
-            // DENSITY IN THE HIGH BITS, THE PUFF'S INDEX IN THE LOW ONES. POSITIVE FLOATS SORT THE
-            // SAME AS THEIR RAW BITS, SO SORTING THE KEYS SORTS THE PUFFS BY DENSITY.
+            // POSITIVE FLOATS SORT THE SAME AS THEIR RAW BITS, SO THESE KEYS SORT BY DENSITY
             SORT_KEYS[count++] = (long) Float.floatToRawIntBits(density) << 32 | puffIndex;
         }
 
-        // ASCENDING, SO WALK IT BACKWARD FOR DENSEST FIRST
         Arrays.sort(SORT_KEYS, 0, count);
         for (int slot = 0; slot < count; slot++) {
             long key = SORT_KEYS[count - 1 - slot];
@@ -237,12 +210,8 @@ public final class FartGasUniforms {
         return count;
     }
 
-    /**
-     * COPIES THE SORTED PUFFS INTO GROUPED, ONE RUN PER SCREEN RECTANGLE (SEE
-     * {@link FartGasSimulation#MAX_RECTS}), AND FILLS RECT_ENDS WITH WHERE EACH RUN ENDS. THE
-     * RUNS GO IN ORDER OF THEIR DENSEST PUFF AND STAY DENSEST FIRST INSIDE, SO A FULL HIT LIST
-     * STILL MOSTLY DROPS THE FAINTEST PUFFS. RETURNS HOW MANY RECTANGLES HAVE PUFFS.
-     */
+    // ONE RUN PER SCREEN RECTANGLE. THE RUNS GO IN ORDER OF THEIR DENSEST PUFF AND STAY DENSEST FIRST
+    // INSIDE, SO A FULL HIT LIST STILL MOSTLY DROPS THE FAINTEST PUFFS
     private static int groupByRect(int count) {
         Arrays.fill(RECT_ORDER, -1);
         int rects = 0;
@@ -253,7 +222,6 @@ public final class FartGasUniforms {
             }
         }
 
-        // COUNT EACH RUN, THEN TURN THE COUNTS INTO END INDICES
         Arrays.fill(RECT_ENDS, 0);
         for (int puffIndex = 0; puffIndex < count; puffIndex++) {
             RECT_ENDS[RECT_ORDER[rectOf(SORTED[puffIndex])]]++;
@@ -263,8 +231,7 @@ public final class FartGasUniforms {
             RECT_ENDS[run] += RECT_ENDS[run - 1];
         }
 
-        // FILL EACH RUN FROM ITS END BACKWARD, WALKING THE SORTED PUFFS BACKWARD, SO EACH RUN
-        // KEEPS THEIR DENSEST-FIRST ORDER. RECT_ENDS ENDS UP HOLDING EACH RUN'S START...
+        // FILLING BACKWARD KEEPS EACH RUN DENSEST FIRST. RECT_ENDS ENDS UP HOLDING EACH RUN'S START...
         for (int puffIndex = count - 1; puffIndex >= 0; puffIndex--) {
             int run = RECT_ORDER[rectOf(SORTED[puffIndex])];
             int slot = --RECT_ENDS[run];
@@ -272,7 +239,7 @@ public final class FartGasUniforms {
             GROUPED_DENSITY[slot] = SORTED_DENSITY[puffIndex];
         }
 
-        // ...SO SHIFT IT BACK TO THE ENDS. EVERY UNUSED RECTANGLE ENDS WHERE THE LAST ONE DOES.
+        // ...SO SHIFT IT BACK TO THE ENDS. EVERY UNUSED RECTANGLE ENDS WHERE THE LAST ONE DOES
         for (int run = 0; run < FartGasSimulation.MAX_RECTS; run++) {
             RECT_ENDS[run] = run + 1 < rects ? RECT_ENDS[run + 1] : count;
         }
@@ -284,10 +251,9 @@ public final class FartGasUniforms {
         return Mth.clamp(puff.rect, 0, FartGasSimulation.MAX_RECTS - 1);
     }
 
-    /** DIRECTION/COLOR OF THE DOMINANT CELESTIAL LIGHT AND THE SKY AMBIENT COLOR. */
     public static Lighting lighting(SkyRenderState sky) {
         if (sky.skybox != DimensionType.Skybox.OVERWORLD) {
-            // NO SUN: FLAT, DIMENSION-TINTED AMBIENT (PUFF SKY LIGHT IS FORCED TO 1 IN SKYLESS DIMENSIONS).
+            // FLAT, DIMENSION-TINTED AMBIENT (PUFF SKY LIGHT IS FORCED TO 1 IN SKYLESS DIMENSIONS)
             boolean end = sky.skybox == DimensionType.Skybox.END;
             return new Lighting(
                 new Vector3f(0.0F, 1.0F, 0.0F),
@@ -301,7 +267,7 @@ public final class FartGasUniforms {
         float sunHeight = sunDir.y;
         float clearSky = sky.rainBrightness;
 
-        // SAME SHAPE AS VANILLA'S SKY DARKENING, SO THE GAS DIMS IN STEP WITH THE TERRAIN.
+        // SAME SHAPE AS VANILLA'S SKY DARKENING, SO THE GAS DIMS IN STEP WITH THE TERRAIN
         float daylight = Mth.clamp(sunHeight * 2.0F + 0.2F, 0.0F, 1.0F);
 
         Vector3f lightDir;
@@ -310,7 +276,6 @@ public final class FartGasUniforms {
         if (sunHeight > -0.08F) {
             lightDir = sunDir;
             strength = 1.05F * daylight * daylight * Mth.lerp(clearSky, 0.2F, 1.0F);
-            // WARM, LOW SUN AT DAWN/DUSK; NEUTRAL WHITE AT NOON.
             float noon = smoothstep(0.0F, 0.45F, sunHeight);
             lightColor = new Vector3f(1.0F, 0.52F, 0.28F).lerp(new Vector3f(1.0F, 0.96F, 0.88F), noon);
         } else {
@@ -320,7 +285,7 @@ public final class FartGasUniforms {
         }
 
         Vector3fc skyColor = sky.skyColor != null ? sky.skyColor : new Vector3f(0.47F, 0.65F, 1.0F);
-        // AMBIENT FOLLOWS THE SKY COLOR, WITH A FAINT MOONLIGHT FLOOR SO NIGHT GAS STAYS READABLE.
+        // A FAINT MOONLIGHT FLOOR KEEPS NIGHT GAS READABLE
         Vector3f ambient = new Vector3f(
             skyColor.x() * 0.55F + 0.035F,
             skyColor.y() * 0.55F + 0.040F,

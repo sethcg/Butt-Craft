@@ -15,12 +15,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/**
- * THERE ARE NO ARROWS OF FARTS, SO THE RECIPE BOOK DOESN'T SHOW ONE.
- *
- * <p>THE TIPPED ARROW RECIPE CYCLES THROUGH EVERY POTION, SO THIS SKIPS THE FART IN THE
- * LAMBDA THAT TURNS EACH POTION INTO ITS STACKS.
- */
+// THE RECIPE BOOK'S TIPPED ARROW CYCLES THROUGH EVERY POTION; THIS SKIPS THE FART, WHICH HAS NO ARROW
 @Mixin(SlotDisplay.WithAnyPotion.class)
 public abstract class WithAnyPotionMixin {
 

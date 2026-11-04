@@ -24,11 +24,7 @@ public class ButtCraftClient implements ClientModInitializer {
 
         FartGas.initialize();
 
-        // CHECK FOR THE FART KEY EVERY CLIENT TICK
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-
-            // HANDLE EVERY FART KEY PRESS THAT HAS BEEN REGISTERED.
-            // THE SERVER ENFORCES THE COOLDOWN, SO EVERY PRESS IS SENT.
             while (KeyBindings.FART_KEY.consumeClick()) {
                 if (client.player != null) {
                     ClientPlayNetworking.send(new FartRequestPayload());
@@ -36,8 +32,6 @@ public class ButtCraftClient implements ClientModInitializer {
             }
         });
 
-        // RECEIVE FARTS FROM THE SERVER (HANDLERS RUN ON THE RENDER THREAD): A PLAYER'S, OR
-        // ONE THAT BURSTS OUT AROUND A POINT (E.G. A SPLASH POTION)
         ClientPlayNetworking.registerGlobalReceiver(
                 FartPayload.TYPE,
                 (payload, context) -> {
@@ -55,8 +49,6 @@ public class ButtCraftClient implements ClientModInitializer {
     }
 
     private void playFart(Minecraft client, Vec3 pos) {
-        // POSITIONAL: FADES OUT LINEARLY OVER THE attenuation_distance IN sounds.json, WHICH
-        // MATCHES THE SERVER'S 32-BLOCK SEND RADIUS.
         SimpleSoundInstance sound = new SimpleSoundInstance(
                 ModSounds.FART.location(),
                 SoundSource.PLAYERS,

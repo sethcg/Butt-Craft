@@ -11,11 +11,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/**
- * THERE ARE NO ARROWS OF FARTS, SO A LINGERING FART CAN'T BE CRAFTED INTO TIPPED ARROWS.
- *
- * <p>THE VANILLA TIPPED ARROW RECIPE TAKES ANY LINGERING POTION IN THE MIDDLE SLOT.
- */
+// THERE ARE NO ARROWS OF FARTS, BUT THE TIPPED ARROW RECIPE TAKES ANY LINGERING POTION
 @Mixin(ImbueRecipe.class)
 public abstract class ImbueRecipeMixin {
 

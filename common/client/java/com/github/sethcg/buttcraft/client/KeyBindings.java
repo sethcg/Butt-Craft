@@ -24,7 +24,6 @@ public final class KeyBindings {
     private KeyBindings() {
     }
 
-    /** LOADS THIS CLASS, WHICH REGISTERS THE KEY MAPPINGS. */
     public static void initialize() {
     }
 }

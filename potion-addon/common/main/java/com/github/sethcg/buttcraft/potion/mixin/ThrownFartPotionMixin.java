@@ -15,11 +15,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * A SPLASH OR LINGERING FART RELEASES A FART CLOUD WHERE IT BREAKS, INSTEAD OF SPLASHING THE
- * BOTTLE'S STENCH II ON EVERYONE NEARBY OR LEAVING THE USUAL POTION CLOUD. HOW LONG THE CLOUD
- * AND ITS STENCH LAST DEPENDS ON THE BOTTLE (SEE {@link FartPotions.ThrownFart}).
- */
+// RELEASES A FART CLOUD INSTEAD OF SPLASHING THE BOTTLE'S STENCH II OR LEAVING THE USUAL POTION CLOUD
 @Mixin({ ThrownSplashPotion.class, ThrownLingeringPotion.class })
 public abstract class ThrownFartPotionMixin {
 
@@ -30,7 +26,6 @@ public abstract class ThrownFartPotionMixin {
             return;
         }
 
-        // CREDIT WHOEVER THREW IT
         Projectile potion = (Projectile) (Object) this;
         ButtCraft.fartBurst(
             level,
@@ -40,7 +35,6 @@ public abstract class ThrownFartPotionMixin {
             thrown.stenchTicks()
         );
 
-        // SKIP THE VANILLA SPLASH OR POTION CLOUD, THE FART CLOUD GIVES THE STENCH
         ci.cancel();
     }
 }

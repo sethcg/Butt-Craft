@@ -4,29 +4,23 @@
 #include <minecraft:projection.glsl>
 #include <buttcraft:fart_gas_common.glsl>
 
-// SCREEN-SPACE QUADS (NO VERTEX BUFFER) COVERING ONLY THE PROJECTED BOUNDS OF THE
-// PUFFS, SO PIXELS THAT CANNOT SEE ANY GAS NEVER RUN THE RAY MARCHER. IT ALSO
-// OUTPUTS WHAT THE FRAGMENT SHADER NEEDS TO UNPROJECT ANY DEPTH AT ITS PIXEL:
+// SCREEN-SPACE QUADS (NO VERTEX BUFFER) COVERING ONLY THE PUFFS' PROJECTED BOUNDS, PLUS WHAT THE
+// FRAGMENT SHADER NEEDS TO UNPROJECT ANY DEPTH AT ITS PIXEL:
 //
 //   inverse(ProjMat) * vec4(ndc.xy, z, 1) = unprojectBase + z * unprojectDepth
 //
-// THE BASE TERM IS LINEAR IN SCREEN SPACE, SO IT INTERPOLATES EXACTLY. THIS
-// STAYS CORRECT WHEN VANILLA FOLDS VIEW BOBBING (A TRANSLATION + ROTATION) INTO
-// THE PROJECTION MATRIX, WHERE THE EYE IS NO LONGER AT THE ORIGIN. THAT IS ALSO WHY
-// THE BOUNDS ARE COMPUTED HERE RATHER THAN ON THE CPU: ONLY THE GPU SEES THAT MATRIX.
+// THE BASE TERM IS LINEAR IN SCREEN SPACE, SO IT INTERPOLATES EXACTLY. THE BOUNDS ARE COMPUTED HERE
+// BECAUSE VANILLA FOLDS VIEW BOBBING INTO ProjMat, AND ONLY THE GPU SEES THAT MATRIX
 //
-// BY DEFAULT EACH SCREEN RECTANGLE'S RUN OF PUFFS GETS ITS OWN QUAD (6 VERTICES EACH), SO
-// SEPARATE CLOUDS DON'T MARCH THE SCREEN BETWEEN THEM. QUADS THAT WOULD OVERLAP A LOT ARE
-// MERGED. THAT IS ONLY SAFE WITHOUT BLENDING, SO PASSES THAT BLEND ONTO THE SCENE DEFINE
-// FART_GAS_SINGLE_RECT AND DRAW ONE QUAD AROUND EVERY PUFF.
+// OVERLAPPING QUADS ARE ONLY SAFE WITHOUT BLENDING, SO PASSES THAT BLEND ONTO THE SCENE DEFINE
+// FART_GAS_SINGLE_RECT AND DRAW ONE QUAD AROUND EVERY PUFF
 //
-// EITHER WAY IT ALSO OUTPUTS EACH RUN'S OWN BOUNDS (BEFORE ANY MERGING). fart_gas.fsh ONLY
-// TESTS THE PUFFS OF THE RUNS WHOSE BOUNDS HOLD ITS PIXEL, SO A PIXEL IN A MERGED QUAD, OR
-// WHERE TWO QUADS OVERLAP, STILL SEES EVERY RUN THAT CAN REACH IT AND NO OTHERS.
+// runBounds IS EACH RUN'S OWN BOUNDS BEFORE ANY MERGING, SO A PIXEL IN A MERGED QUAD, OR WHERE TWO
+// QUADS OVERLAP, STILL TESTS EVERY RUN THAT CAN REACH IT AND NO OTHERS
 
 layout(location = 0) out vec4 unprojectBase;
 layout(location = 1) out vec4 unprojectDepth;
-// EVERY VERTEX WORKS THESE OUT THE SAME, SO flat LOSES NOTHING. EMPTY RUNS ARE EMPTY_RECT.
+// EVERY VERTEX WORKS THESE OUT THE SAME, SO flat LOSES NOTHING
 layout(location = 2) flat out vec4 runBounds[MAX_RECTS];
 
 const vec2 CORNERS[6] = vec2[](
@@ -34,7 +28,7 @@ const vec2 CORNERS[6] = vec2[](
     vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(1.0, 1.0)
 );
 
-// A BOX CROSSING THE EYE PLANE IS CLIPPED HERE (CLIP-SPACE W) BEFORE IT IS PROJECTED.
+// CLIP-SPACE W WHERE A BOX CROSSING THE EYE PLANE IS CLIPPED
 const float NEAR_W = 0.05;
 
 const vec4 EMPTY_RECT = vec4(1.0, 1.0, -1.0, -1.0);
@@ -48,11 +42,11 @@ float rectArea(vec4 rect) {
     return size.x * size.y;
 }
 
-// EXACT NDC BOUNDS OF A SPHERE (VIEW-SPACE center, radius) THAT DOESN'T CROSS THE EYE PLANE.
+// EXACT NDC BOUNDS OF A SPHERE THAT DOESN'T CROSS THE EYE PLANE
 // IN HOMOGENEOUS SCREEN SPACE THE SPHERE'S OUTLINE IS THE CONIC WITH DUAL C = M Q M^T, WHERE M
 // IS PROJMAT'S X / Y / W ROWS AND Q THE SPHERE'S DUAL QUADRIC. A VERTICAL LINE x = X TOUCHES IT
-// WHERE C00 - 2 X C02 + X^2 C22 = 0 (AND THE SAME FOR y). WORKS FOR ANY PROJMAT, BOBBING
-// INCLUDED. C22 < 0 EXACTLY WHEN THE SPHERE IS CLEAR OF THE EYE PLANE.
+// WHERE C00 - 2 X C02 + X^2 C22 = 0 (AND THE SAME FOR y). C22 < 0 EXACTLY WHEN THE SPHERE IS CLEAR OF
+// THE EYE PLANE
 vec4 sphereRect(vec3 center, float radius, vec4 clipCenter, float conic22) {
     vec3 rowX = vec3(ProjMat[0][0], ProjMat[1][0], ProjMat[2][0]);
     vec3 rowY = vec3(ProjMat[0][1], ProjMat[1][1], ProjMat[2][1]);
@@ -68,9 +62,8 @@ vec4 sphereRect(vec3 center, float radius, vec4 clipCenter, float conic22) {
     return vec4(min(edgeA, edgeB), max(edgeA, edgeB));
 }
 
-// CONSERVATIVE NDC BOUNDS OF A SPHERE THAT CROSSES THE EYE PLANE: ITS VIEW-SPACE BOX, CLIPPED
-// AT w = NEAR_W. THE CLIPPED BOX'S CORNERS ARE THE BOX CORNERS IN FRONT PLUS WHERE ITS EDGES
-// CROSS THE PLANE, SO GAS OFF TO ONE SIDE ONLY COVERS THAT SIDE OF THE SCREEN.
+// CONSERVATIVE NDC BOUNDS OF A SPHERE THAT CROSSES THE EYE PLANE: ITS VIEW-SPACE BOX, CLIPPED AT
+// w = NEAR_W, SO GAS OFF TO ONE SIDE ONLY COVERS THAT SIDE OF THE SCREEN
 vec4 clippedBoxRect(vec3 center, float radius) {
     vec4 clip[8];
     for (int cornerIndex = 0; cornerIndex < 8; cornerIndex++) {
@@ -85,7 +78,7 @@ vec4 clippedBoxRect(vec3 center, float radius) {
             rect = unionRect(rect, vec4(ndc, ndc));
         }
 
-        // THE THREE EDGES FROM THIS CORNER TOWARD ITS HIGHER NEIGHBOURS (EACH EDGE ONCE).
+        // ONLY TOWARD HIGHER NEIGHBOURS, SO EACH EDGE IS VISITED ONCE
         for (int axis = 0; axis < 3; axis++) {
             int neighbourIndex = cornerIndex | (1 << axis);
             if (neighbourIndex == cornerIndex || (clip[cornerIndex].w > NEAR_W) == (clip[neighbourIndex].w > NEAR_W)) {
@@ -101,7 +94,6 @@ vec4 clippedBoxRect(vec3 center, float radius) {
     return rect;
 }
 
-// NDC BOUNDS OF PUFFS [first, end).
 vec4 puffRect(int first, int end, mat3 worldToView) {
     vec4 rect = EMPTY_RECT;
     for (int runOffset = 0; runOffset < MAX_PUFFS; runOffset++) {
@@ -116,7 +108,7 @@ vec4 puffRect(int first, int end, mat3 worldToView) {
         vec3 rowW = vec3(ProjMat[0][3], ProjMat[1][3], ProjMat[2][3]);
         float conic22 = shape.w * shape.w * dot(rowW, rowW) - clipCenter.w * clipCenter.w;
         if (conic22 < 0.0) {
-            // CLEAR OF THE EYE PLANE: SKIP IT IF IT IS ENTIRELY BEHIND THE CAMERA.
+            // CLEAR OF THE EYE PLANE: w <= 0 MEANS ENTIRELY BEHIND THE CAMERA
             if (clipCenter.w > 0.0) {
                 rect = unionRect(rect, sphereRect(center, shape.w, clipCenter, conic22));
             }
@@ -125,7 +117,7 @@ vec4 puffRect(int first, int end, mat3 worldToView) {
         }
     }
 
-    // ONE PIXEL-ISH OF SLACK FOR SAMPLE COVERAGE AT THE EDGES.
+    // ONE PIXEL-ISH OF SLACK FOR SAMPLE COVERAGE AT THE EDGES
     return clamp(vec4(rect.xy - 0.01, rect.zw + 0.01), -1.0, 1.0);
 }
 
@@ -133,8 +125,7 @@ void main() {
     mat3 worldToView = transpose(mat3(ViewToWorld));
     int puffCount = min(Counts.x, MAX_PUFFS);
 
-    // EVERY VERTEX WORKS OUT ALL THE RECTANGLES (CHEAP: EACH PUFF IS PROJECTED ONCE) AND MERGES
-    // THEM THE SAME WAY, SO THE QUADS AGREE.
+    // EVERY VERTEX WORKS OUT ALL THE RECTANGLES AND MERGES THEM THE SAME WAY, SO THE QUADS AGREE
     int rectCount = clamp(Frame.y, 1, MAX_RECTS);
     vec4 rects[MAX_RECTS];
     for (int run = 0; run < MAX_RECTS; run++) {
@@ -149,10 +140,8 @@ void main() {
         bounds = unionRect(bounds, rects[run]);
     }
     #else
-    // TWO RECTANGLES MERGE WHEN THEIR UNION IS NO BIGGER THAN BOTH OF THEM: MARCHING THE
-    // OVERLAP TWICE WOULD COST MORE THAN THE UNION. A MERGED RECTANGLE MAY NOW OVERLAP ONES
-    // IT WAS ALREADY COMPARED WITH, SO REPEAT UNTIL NOTHING MERGES. EACH MERGE EMPTIES A
-    // RECTANGLE, SO THAT TAKES AT MOST MAX_RECTS PASSES.
+    // MERGE WHEN THE UNION IS NO BIGGER THAN BOTH: MARCHING THE OVERLAP TWICE WOULD COST MORE. A MERGED
+    // RECTANGLE MAY NOW OVERLAP ONES IT WAS ALREADY COMPARED WITH, SO REPEAT UNTIL NOTHING MERGES
     for (int pass = 0; pass < MAX_RECTS; pass++) {
         bool merged = false;
         for (int rectA = 0; rectA < MAX_RECTS; rectA++) {
@@ -176,7 +165,7 @@ void main() {
 
     vec2 ndc = mix(bounds.xy, bounds.zw, CORNERS[gl_VertexIndex % 6]);
 
-    // AN EMPTY RECTANGLE (LO > HI) GIVES A ZERO-AREA QUAD, SO NOTHING IS RASTERIZED.
+    // AN EMPTY RECTANGLE (LO > HI) GIVES A ZERO-AREA QUAD, SO NOTHING IS RASTERIZED
     if (bounds.x >= bounds.z || bounds.y >= bounds.w) {
         ndc = vec2(-2.0);
     }
