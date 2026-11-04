@@ -26,30 +26,31 @@ Whether you're defending your base, clearing a cave, or just asserting dominance
 - 🍾 **Bottled Fart** — Use an empty glass bottle on a fart cloud to scoop it up.
 - 💣 **Splash Fart** — Brew a Bottled Fart with gunpowder, releasing a fart cloud where it breaks.
 - ☁️ **Lingering Fart** — Brew a Splash Fart with dragon's breath, the fart cloud lingers for 18 seconds.
+
 ## Version Support
 
 - 🧵 **Mod Loader:** Fabric
 - 📦 **Dependency:** Fabric API
 
 | Minecraft Version | Support     |
-|:-----------|:------------------:|
-| 26.3+      | ✅ Supported      |
-| Below 26.3 | ❌ Not Supported  |
+|:------------------|:------------------:|
+| 26.3.x            | ✅ Supported      |
+| Any other version | ❌ Not Supported  |
 
 ## Developer Notes:
 
 ```bash
 
 # BUILD
-./gradlew build
+.\gradlew build
 
 # CLEAN AND REBUILD
-./gradlew clean build
+.\gradlew clean build
 
 # RUN
-./gradlew :26.3:runClient
+.\gradlew :26.3:runClient
 
 # RUN WITH THE POTION ADD-ON
-./gradlew :26.3:potion-addon:runClient
+.\gradlew :26.3:potion-addon:runClient
 
 ```

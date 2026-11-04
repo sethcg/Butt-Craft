@@ -1,0 +1,41 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'microsoft'
+          cache: gradle
+
+      - name: make gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: build
+        run: ./gradlew build
+
+      - name: publish github release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          jars=$(find . -path '*/build/libs/*.jar' ! -name '*-sources.jar')
+          gh release create "$GITHUB_REF_NAME" $jars \
+            --title "Butt-Craft $GITHUB_REF_NAME" \
+            --draft
