@@ -4,17 +4,15 @@
 >
 > *Because sometimes the best offense comes from behind.*
 
-This mod adds flatulence to Minecraft as a weapon. Each fart deals damage, sends enemies flying, and leaves absolutely no question about what just happened.
+Farts deal damage, launch mobs, and lingers around as a toxic gas cloud.
 
-Use it to defend your base, clear a cave, or just to assert dominance.
+<img width="50%" alt="ButtCraft fart cloud" src="https://github.com/user-attachments/assets/bb4cd245-96ff-4399-b1c3-f50b6e42eae8" />
 
 ## Potion Add-on
 
-`buttcraft-potion-addon` is an optional extension mod that adds fart potions:
+`buttcraft-potion-addon` is an optional extension that adds fart potions. Scoop up a fart cloud with an empty bottle, brew it, and throw it.
 
-- Bottled Fart: use an empty glass bottle on a fart cloud to scoop it up.
-- Splash Fart: brew a Bottled Fart with gunpowder. It releases a fart cloud where it breaks.
-- Lingering Fart: brew a Splash Fart with dragon's breath. The fart cloud lingers for 18 seconds.
+<img width="50%" alt="ButtCraft fart potion" src="https://github.com/user-attachments/assets/e314bd71-56b4-4b27-9ede-4b9b8f87d9f6" />
 
 ## Version Support
 
@@ -27,6 +25,9 @@ Requires Fabric and Fabric API.
 
 ## Developer Notes
 
+<details closed>
+<summary><b>Build</b></summary>
+  
 ```bash
 
 # BUILD
@@ -42,3 +43,5 @@ Requires Fabric and Fabric API.
 .\gradlew :26.3:potion-addon:runClient
 
 ```
+
+</details>
