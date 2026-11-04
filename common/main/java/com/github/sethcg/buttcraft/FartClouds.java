@@ -162,7 +162,7 @@ public final class FartClouds {
     }
 
     private static void tick(ServerLevel level) {
-        if (CLOUDS.isEmpty()) {
+        if (CLOUDS.isEmpty() || !level.tickRateManager().runsNormally()) {
             return;
         }
 

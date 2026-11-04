@@ -30,7 +30,7 @@ public final class FartGas {
                 return;
             }
 
-            if (!client.isPaused()) {
+            if (!client.isPaused() && client.level.tickRateManager().runsNormally()) {
                 SIMULATION.tick(client.level);
             }
         });
