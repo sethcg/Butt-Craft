@@ -37,5 +37,5 @@ jobs:
         run: |
           jars=$(find . -path '*/build/libs/*.jar' ! -name '*-sources.jar')
           gh release create "$GITHUB_REF_NAME" $jars \
-            --title "Butt-Craft $GITHUB_REF_NAME" \
+            --title "ButtCraft $GITHUB_REF_NAME" \
             --draft

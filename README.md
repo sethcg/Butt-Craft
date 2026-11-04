@@ -1,43 +1,31 @@
-# ButtCraft 💨⚔️
+# ButtCraft
 
 > **Smelt it. Dealt it.**
 >
 > *Because sometimes the best offense comes from behind.*
 
-## Description
+This mod adds flatulence to Minecraft as a weapon. Each fart deals damage, sends enemies flying, and leaves absolutely no question about what just happened.
 
-ButtCraft introduces a powerful new form of combat to Minecraft: <ins>**flatulence**</ins>.
-
-Harness the destructive potential of your backside and unleash devastating blasts upon unsuspecting mobs. Each fart deals damage, sends enemies flying, and leaves absolutely no question about what just happened.
-
-Whether you're defending your base, clearing a cave, or just asserting dominance, ButtCraft gives you the tools to get the job done.
-
-## Features
-
-- ⚔️ **Fart-based combat** — A revolutionary new weapon.
-- 💥 **Damage enemies** — Your farts actually hurt.
-- 💨 **Knockback** — Send mobs flying.
-- 😭 **Bring a tear to their eyes** — For obvious reasons.
+Use it to defend your base, clear a cave, or just to assert dominance.
 
 ## Potion Add-on
 
-`buttcraft-potion-addon` is an optional extension mod that adds fart potions.
+`buttcraft-potion-addon` is an optional extension mod that adds fart potions:
 
-- 🍾 **Bottled Fart** — Use an empty glass bottle on a fart cloud to scoop it up.
-- 💣 **Splash Fart** — Brew a Bottled Fart with gunpowder, releasing a fart cloud where it breaks.
-- ☁️ **Lingering Fart** — Brew a Splash Fart with dragon's breath, the fart cloud lingers for 18 seconds.
+- Bottled Fart: use an empty glass bottle on a fart cloud to scoop it up.
+- Splash Fart: brew a Bottled Fart with gunpowder. It releases a fart cloud where it breaks.
+- Lingering Fart: brew a Splash Fart with dragon's breath. The fart cloud lingers for 18 seconds.
 
 ## Version Support
 
-- 🧵 **Mod Loader:** Fabric
-- 📦 **Dependency:** Fabric API
+Requires Fabric and Fabric API.
 
-| Minecraft Version | Support     |
+| Minecraft Version | Support            |
 |:------------------|:------------------:|
 | 26.3.x            | ✅ Supported      |
 | Any other version | ❌ Not Supported  |
 
-## Developer Notes:
+## Developer Notes
 
 ```bash
 
